@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "SplitCart",
+    "slug": "splitcart",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "splitcart",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.splitcart.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Add receipt photos to shared purchases.",
+        "NSPhotoLibraryUsageDescription": "Attach receipts from your photo library."
+      }
+    },
+    "android": {
+      "package": "app.splitcart.mobile",
+      "permissions": ["CAMERA"]
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "SplitCart",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a receipt for your shared purchase.",
+          "cameraPermission": "Take a receipt photo for your shared purchase.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "icon": "./assets/icon.png",
+    "splash": {
+      "backgroundColor": "#F8F9F5"
+    }
+  }
+}
