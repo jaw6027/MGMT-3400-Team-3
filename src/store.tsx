@@ -234,7 +234,13 @@ export function Provider({ children }: { children: React.ReactNode }) {
           setLoading(true);
           setDemo(!demo);
         },
-        reset: async () => persist(demoData()),
+        reset: async () => {
+          const keys = (await AsyncStorage.getAllKeys()).filter((key) =>
+            key.startsWith("splitcart-payments-demo-v1-"),
+          );
+          if (keys.length) await AsyncStorage.multiRemove(keys);
+          await persist(demoData());
+        },
         signOut: async () => {
           if (demo) {
             setDemo(false);

@@ -23,3 +23,8 @@ enable_confirmations = false
 [storage]
 enabled = true
 file_size_limit = "5MiB"
+
+# Handler verifies user JWTs, Stripe webhook signatures, and scheduler credentials
+# separately. The gateway must permit provider webhooks without a Supabase JWT.
+[functions.payments]
+verify_jwt = false

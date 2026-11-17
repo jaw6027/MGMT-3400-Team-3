@@ -75,7 +75,7 @@ Use the displayed local API URL and anon key. The included config enables local 
 
 All money is stored and calculated in **integer cents**. Decimal strings are parsed without multiplying floating-point input. Equal splits sort membership IDs and distribute the remaining cents one by one, so shares always total the purchase. Custom splits must match exactly; individual shares may be zero. Purchase/repayment totals are capped at 1,000,000 currency units.
 
-`save_expense` validates and saves the purchase and all shares in one database transaction. Table constraints enforce required fields and valid totals. Clients have no direct expense/share write grants. RPCs enforce active household membership, payer permissions, valid participants, unique shares, exact share totals, and private receipt paths. Receipt objects cannot be overwritten or deleted by clients. Repayments are append-only, require the recorder to be an active member and sender/recipient, and cannot link members of different households.
+`save_expense` validates and saves the purchase and all shares in one database transaction. Table constraints enforce required fields and valid totals. Clients have no direct expense/share write grants. RPCs enforce active household membership, payer permissions, valid participants, unique shares, exact share totals, and private receipt paths. Receipt objects cannot be overwritten or deleted by clients. Manual repayments are append-only, require the recorder to be an active member and sender/recipient, and cannot link members of different households.
 
 RLS protects household, purchase, share, repayment, and receipt reads. Private receipt previews use signed URLs that expire after five minutes; an already-issued URL can remain valid until it expires. The client and storage bucket validate JPEG/PNG/WebP types and a 5 MB maximum. MIME allowlists are not malware scanning. No OCR or receipt text extraction runs.
 
@@ -106,10 +106,10 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 
 - Live credentials are not provided. Hosted authentication, email delivery, Storage HTTP uploads, and native camera permissions need a final integration check against your Supabase project and physical devices. Browser flows, SQL access rules, calculations, and bundle exports are verified locally.
 - Use pull-to-refresh to see another roommate's latest changes. No realtime sync, offline queue, push notifications, or multi-household switcher.
-- A recorded repayment is an append-only ledger entry; editing/reversing repayments is not included. Double-check before confirming.
+- A manually recorded repayment is an append-only ledger entry; editing/reversing manual repayments is not included. Double-check before confirming.
 - Client deletion removes a purchase and its shares. Original receipt files remain private, including abandoned uploads. Add a trusted scheduled cleanup job after choosing a retention policy; no service credentials belong in the client.
 - No invite rotation, password-reset UI, account deletion/export UI, or household administration roles in this MVP. Account erasure should use a trusted server-side process that preserves/anonymizes the ledger appropriately.
-- Receipt recognition, payment processing, subscriptions, shopping lists, and currency conversion are deliberately deferred.
+- Receipt recognition, subscriptions, shopping lists, and currency conversion are deliberately deferred. Live bank/card processing and text/email reminders require the provider deployment described below.
 
 ## Project map
 
@@ -121,3 +121,7 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 - `src/ui.tsx`, `src/Illustration.tsx` — design system and original basket artwork.
 - `supabase/migrations/` — deployable database and private storage setup.
 - `src/*.test.ts`, `e2e/` — calculation, SQL/RLS, and browser workflow tests.
+
+## Bank/card payments, automatic dues, and payment reminders
+
+Open **Balances → Manage payments** for hosted bank/card setup, receiving-bank onboarding, a payment review with a **2.5% credit-card-only surcharge**, fixed monthly bank autopay, and verified email/text reminder preferences. Demo mode uses sample accounts and simulated payments; it never moves funds or sends messages. Live use requires the additional migration, deployed Edge Function, Stripe Connect, Twilio, Resend, and a recurring job. See [payment setup and operational details](docs/payments.md) for configuration, test steps, and current limits.

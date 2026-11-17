@@ -152,3 +152,175 @@ test("desktop: overview, history filters, and live login fallback", async ({
     page.getByText("Recent purchases", { exact: true }),
   ).toBeVisible();
 });
+
+test("payments: credit surcharge is disclosed and only principal settles the demo balance", async ({
+  page,
+}) => {
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage payments", exact: true })
+    .click();
+  await expect(
+    page.getByText("Demo payments · no money moves", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Add sample credit card", exact: true })
+    .click();
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("10.20");
+  await page
+    .getByRole("button", { name: "Review payment", exact: true })
+    .click();
+  await expect(
+    page.getByText("Total charged: $10.46", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Confirm demo payment", exact: true })
+    .click();
+  await expect(
+    page.getByText("Demo payment simulated. No money moved.", { exact: true }),
+  ).toBeVisible();
+  const ledger = JSON.parse(
+    (await page.evaluate(() => localStorage.getItem("splitcart-demo-v1")))!,
+  );
+  expect(ledger.repayments).toHaveLength(2);
+  expect(ledger.repayments[0].cents).toBe(1020);
+  const payment = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) =>
+      k.startsWith("splitcart-payments-demo-v1-"),
+    )!;
+    return JSON.parse(localStorage.getItem(key)!).payments[0];
+  });
+  expect(payment.fee).toBe(26);
+  await page
+    .getByRole("button", { name: "Add sample bank", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Set up sample receiving bank", exact: true })
+    .click();
+  await expect(
+    page.getByText("Receiving payments is ready.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Review payment", exact: true })
+    .click();
+  await expect(
+    page.getByText("Total charged: $10.20", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Cancel payment review", exact: true })
+    .click();
+});
+
+test("payments: bank autopay consent, verified reminders, persistence and cancellation", async ({
+  page,
+}) => {
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage payments", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Add sample bank", exact: true })
+    .click();
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("25");
+  await page
+    .getByLabel("Monthly due day (1–28, UTC)", { exact: true })
+    .fill("8");
+  await page
+    .getByRole("switch", {
+      name: "Automatically pay this monthly due",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Save monthly due", exact: true })
+    .click();
+  await expect(
+    page.getByText("Choose a bank account and authorize automatic payments.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("switch", {
+      name: "I authorize the selected bank account to be charged this amount each month on the due day until I cancel",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Save monthly due", exact: true })
+    .click();
+  await expect(
+    page.getByText("Day 8 each month (UTC) · Bank autopay · Demo", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "Remove Demo checking •••• 6789",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByText(
+      "Cancel automatic dues using this method before removing it.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await page
+    .getByLabel("Reminder phone number", { exact: true })
+    .fill("+12025550123");
+  await page
+    .getByRole("switch", {
+      name: "I agree to receive payment reminders and verification texts. Message/data rates may apply; reply STOP to stop texts",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Send phone verification code", exact: true })
+    .click();
+  await page
+    .getByLabel("Phone verification code", { exact: true })
+    .fill("123456");
+  await page.getByRole("button", { name: "Verify phone", exact: true }).click();
+  await page
+    .getByRole("switch", { name: "Email payment reminders", exact: true })
+    .click();
+  await page
+    .getByRole("switch", { name: "Text payment reminders", exact: true })
+    .click();
+  await page.getByRole("button", { name: "1 day before", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Save reminder preferences", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Demo reminder preferences saved. No text or email will be sent.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await page.reload();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage payments", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Reminder phone number", { exact: true }),
+  ).toHaveValue("+12025550123");
+  await expect(
+    page.getByRole("switch", { name: "Email payment reminders", exact: true }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: "Text payment reminders", exact: true }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("button", { name: "1 day before", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page
+    .getByRole("button", {
+      name: "Cancel monthly due to Jordan Lee",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByText("No monthly dues scheduled.", { exact: true }),
+  ).toBeVisible();
+});

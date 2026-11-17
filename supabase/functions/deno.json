@@ -1,0 +1,8 @@
+{
+  "nodeModulesDir": "none",
+  "compilerOptions": { "strict": true },
+  "tasks": {
+    "check": "deno check payments/index.ts",
+    "test": "deno test --allow-env payments/index.test.ts"
+  }
+}

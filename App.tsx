@@ -58,6 +58,7 @@ import {
   Txt,
 } from "./src/ui";
 import Illustration from "./src/Illustration";
+import PaymentsPanel from "./src/PaymentsPanel";
 type Tab = "Overview" | "Purchases" | "Balances" | "Household";
 const tabs: { name: Tab; icon: IconName }[] = [
   { name: "Overview", icon: "Home" },
@@ -1333,6 +1334,7 @@ function Balances({ onRepay }: { onRepay: () => void }) {
         </View>
         <Button label="Record repayment" icon="Plus" onPress={onRepay} />
       </View>
+      <PaymentsPanel />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
         {st.members.map((m, i) => (
           <View
@@ -1414,9 +1416,10 @@ function Balances({ onRepay }: { onRepay: () => void }) {
           <Txt
             style={{ fontSize: 11, lineHeight: 18, color: C.green, flex: 1 }}
           >
-            SplitCart calculates balances and records payments. It does not
-            transfer money. Pay your roommate outside the app, then record it
-            here.
+            SplitCart calculates balances and records payments. Use Manage
+            payments for bank/card payments, or pay your roommate outside the
+            app and record it here. Never record a bank/card payment a second
+            time.
           </Txt>
         </View>
       </View>
@@ -1449,8 +1452,8 @@ function Balances({ onRepay }: { onRepay: () => void }) {
           ))
         ) : (
           <Txt style={s.muted}>
-            Recorded repayments will appear here. No money moves through
-            SplitCart.
+            Repayments will appear here. Record an outside payment manually, or
+            use Manage payments for bank/card payments.
           </Txt>
         )}
       </View>
