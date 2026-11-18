@@ -199,7 +199,11 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
   await page
     .getByRole("button", { name: "Add sample credit card", exact: true })
     .click();
+  await page.getByRole("button", { name: "Pay", exact: true }).click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("10.20");
+  await expect(
+    page.getByText("Estimated total: $10.46", { exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Review payment", exact: true })
     .click();
@@ -217,9 +221,11 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
   );
   expect(db.repayments).toHaveLength(3);
   expect(db.repayments[0].cents).toBe(1020);
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page
     .getByRole("button", { name: "Add sample bank", exact: true })
     .click();
+  await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("25");
   await page
     .getByLabel("Monthly due day (1–28, UTC)", { exact: true })
@@ -252,6 +258,7 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
       exact: true,
     }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Reminders", exact: true }).click();
   await page
     .getByLabel("Reminder phone number", { exact: true })
     .fill("+12025550123");
@@ -288,9 +295,11 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
   await page
     .getByRole("button", { name: "Manage payments", exact: true })
     .click();
+  await page.getByRole("button", { name: "Reminders", exact: true }).click();
   await expect(
     page.getByLabel("Reminder phone number", { exact: true }),
   ).toHaveValue("+12025550123");
+  await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page
     .getByRole("button", {
       name: "Cancel monthly due to Jordan Lee",

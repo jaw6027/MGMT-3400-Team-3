@@ -43,6 +43,7 @@ export default function PaymentsPanel() {
   const key = `splitcart-payments-demo-v1-${st.user!.id}-${st.household!.id}`;
   const [open, setOpen] = useState(false),
     [ready, setReady] = useState(false);
+  const [section, setSection] = useState("Accounts");
   const [state, setState] = useState<PaymentState>(emptyPayments);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -70,6 +71,16 @@ export default function PaymentsPanel() {
     [code, setCode] = useState(""),
     [phoneVerified, setPhoneVerified] = useState(false);
   const method = state.methods.find((m) => m.id === selected);
+  let estimate: ReturnType<typeof quote> | null = null;
+  try {
+    if (method)
+      estimate = quote(
+        to === "app" ? state.appDues : parseMoney(amount),
+        method.funding,
+      );
+  } catch {
+    // An unfinished amount is normal while typing; validation runs on review.
+  }
   const fmt = (n: number) => money(n, "USD");
   const recipientName = (id: string) =>
     id === "app"
@@ -341,7 +352,7 @@ export default function PaymentsPanel() {
             </Txt>
             <Txt style={{ lineHeight: 20, fontSize: 12 }}>
               {st.demo
-                ? "Try sample accounts, a payment preview, and saved preferences. No real bank/card numbers are requested. Automatic payments and text/email delivery do not run in demo mode."
+                ? "Sample accounts only. Payments, autopay, texts, and emails are simulated; no real financial details are collected."
                 : "Stripe collects account/routing numbers and card details on its secure pages. SplitCart stores provider references only. US bank transfers and USD payments are supported."}
             </Txt>
           </View>
@@ -351,17 +362,19 @@ export default function PaymentsPanel() {
             </Txt>
           ) : null}
           {message ? (
-            <Txt accessibilityRole="alert" style={{ color: C.green }}>
+            <Txt accessibilityLiveRegion="polite" style={{ color: C.green }}>
               {message}
             </Txt>
           ) : null}
-          <Button
-            secondary
-            small
-            label="Refresh payment status"
-            loading={busy}
-            onPress={() => void run(load)}
-          />
+          {(section === "Accounts" || section === "Activity" || !ready) && (
+            <Button
+              secondary
+              small
+              label="Refresh payment status"
+              loading={busy}
+              onPress={() => void run(load)}
+            />
+          )}
           {ready && (
             <>
               {!state.available && (
@@ -376,407 +389,597 @@ export default function PaymentsPanel() {
                   and repayment records still work.
                 </Txt>
               )}
-              <Title style={{ fontSize: 22 }}>Your payment methods</Title>
-              <Txt style={s.muted}>
-                Bank & debit: no surcharge. Credit cards: 2.5% of the payment
-                amount.
-              </Txt>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-                <Button
-                  secondary
-                  label={st.demo ? "Add sample bank" : "Link bank account"}
-                  icon="Link"
-                  disabled={busy || !state.available}
-                  onPress={() => void run(() => setup("bank"))}
-                />
-                <Button
-                  secondary
-                  label={st.demo ? "Add sample credit card" : "Add card"}
-                  icon="Wallet"
-                  disabled={busy || !state.available}
-                  onPress={() => void run(() => setup("card"))}
-                />
-              </View>
-              {state.methods.length === 0 && (
-                <Txt style={s.muted}>
-                  Add a bank account or card to get started.
-                </Txt>
-              )}
-              {state.methods.map((m) => (
-                <View key={m.id} style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-                  <Chip
-                    active={selected === m.id}
-                    label={m.label}
-                    onPress={() => {
-                      setSelected(m.id);
-                      setReview(null);
-                      setAuthorize(false);
-                    }}
-                  />
-                  <Button
-                    secondary
-                    small
-                    label={`Remove ${m.label}`}
-                    disabled={busy}
-                    onPress={() =>
-                      void run(async () => {
-                        if (
-                          state.dues.some(
-                            (d) => d.automatic && d.method === m.id,
-                          )
-                        )
-                          throw new Error(
-                            "Cancel automatic dues using this method before removing it.",
-                          );
-                        if (st.demo) {
-                          await persist({
-                            ...state,
-                            methods: state.methods.filter((x) => x.id !== m.id),
-                          });
-                          if (selected === m.id) setSelected("");
-                        } else {
-                          await paymentAction("remove_method", { id: m.id });
-                          await load();
-                        }
+              <View
+                accessibilityLabel="Payment sections"
+                style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+              >
+                {["Accounts", "Pay", "Autopay", "Reminders", "Activity"].map(
+                  (name) => (
+                    <Chip
+                      key={name}
+                      label={name}
+                      active={section === name}
+                      onPress={() => {
+                        setSection(name);
                         setReview(null);
-                      })
-                    }
-                  />
-                </View>
-              ))}
-              <View style={s.divider} />
-              <Title style={{ fontSize: 22 }}>Receive payments</Title>
-              <Txt style={{ lineHeight: 21 }}>
-                Set up your receiving bank with account and routing numbers
-                through Stripe. This is separate from the bank account used to
-                pay. Bank deposits follow the provider’s payout schedule.
-              </Txt>
-              <Txt style={{ color: state.payoutReady ? C.green : C.muted }}>
-                {state.payoutReady
-                  ? "Receiving payments is ready."
-                  : "Receiving payments is not set up."}
-              </Txt>
-              <Button
-                secondary
-                label={
-                  st.demo
-                    ? "Set up sample receiving bank"
-                    : "Set up receiving bank"
-                }
-                disabled={busy || !state.available}
-                onPress={() => void run(() => setup("payout"))}
-              />
-              <View style={s.divider} />
-              <Title style={{ fontSize: 22 }}>Make a payment</Title>
-              <Txt style={s.label}>PAY TO</Txt>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {[
-                  ...roommates.map((m) => ({ id: m.id, name: m.name })),
-                  ...(state.appDues
-                    ? [{ id: "app", name: "SplitCart app dues" }]
-                    : []),
-                ].map((m) => (
-                  <Chip
-                    key={m.id}
-                    label={m.name}
-                    active={to === m.id}
-                    onPress={() => {
-                      setTo(m.id);
-                      setReview(null);
-                      setAuthorize(false);
-                    }}
-                  />
-                ))}
+                        setError("");
+                        setMessage("");
+                      }}
+                    />
+                  ),
+                )}
               </View>
-              {to === "app" ? (
-                <Txt>App dues: {fmt(state.appDues)}</Txt>
-              ) : (
-                <Field
-                  label="Payment amount (USD)"
-                  value={amount}
-                  onChangeText={(v: string) => {
-                    setAmount(v);
-                    setReview(null);
-                    setAuthorize(false);
-                  }}
-                  keyboardType="decimal-pad"
-                  placeholder="0.00"
-                />
-              )}
-              <Button
-                label="Review payment"
-                disabled={
-                  busy ||
-                  !method ||
-                  !state.available ||
-                  st.household!.currency !== "USD"
-                }
-                onPress={() => void run(async () => reviewPayment())}
-              />
-              {review && (
-                <View
-                  style={{
-                    padding: 17,
-                    gap: 13,
-                    backgroundColor: C.sage,
-                    borderRadius: 12,
-                  }}
-                >
-                  <Txt style={{ fontFamily: "DMBold" }}>
-                    Review {st.demo ? "demo " : ""}payment to{" "}
-                    {recipientName(review.recipient)}
-                  </Txt>
-                  <Txt>Payment: {fmt(review.cents)}</Txt>
-                  <Txt>
-                    Credit card surcharge (2.5% on credit only):{" "}
-                    {fmt(review.fee)}
-                  </Txt>
-                  <Txt style={{ fontFamily: "DMBold", fontSize: 20 }}>
-                    Total charged: {fmt(review.total)}
-                  </Txt>
-                  <Txt style={{ fontSize: 12, lineHeight: 20 }}>
-                    By confirming, you authorize this one-time charge to your
-                    selected method. Your roommate receives the payment amount;
-                    the surcharge does not reduce your dues. Bank payments can
-                    take several business days.
-                  </Txt>
-                  <Button
-                    label={
-                      st.demo
-                        ? "Confirm demo payment"
-                        : `Pay ${fmt(review.total)}`
-                    }
-                    loading={busy}
-                    onPress={() => void run(pay)}
-                  />
-                  <Button
-                    secondary
-                    label="Cancel payment review"
-                    disabled={busy}
-                    onPress={() => setReview(null)}
-                  />
-                </View>
-              )}
-              <View style={s.divider} />
-              <Title style={{ fontSize: 22 }}>Monthly dues & autopay</Title>
-              <Txt style={{ lineHeight: 21 }}>
-                Use the recipient and amount above to schedule a fixed monthly
-                due. Due dates use UTC. Automatic payment uses a linked bank
-                account with no surcharge; it does not automatically pay a
-                changing household balance.
-              </Txt>
-              <Field
-                label="Monthly due day (1–28, UTC)"
-                value={day}
-                onChangeText={(v: string) => {
-                  setDay(v);
-                  setAuthorize(false);
-                }}
-                keyboardType="number-pad"
-              />
-              <Toggle
-                label="Automatically pay this monthly due"
-                value={automatic}
-                onChange={(v) => {
-                  setAutomatic(v);
-                  setAuthorize(false);
-                }}
-              />
-              {automatic && (
-                <Toggle
-                  label="I authorize the selected bank account to be charged this amount each month on the due day until I cancel"
-                  value={authorize}
-                  onChange={setAuthorize}
-                />
-              )}
-              <Button
-                secondary
-                label="Save monthly due"
-                disabled={
-                  busy ||
-                  (automatic && (!method || !state.available)) ||
-                  st.household!.currency !== "USD"
-                }
-                onPress={() => void run(saveDue)}
-              />
-              {state.dues.length === 0 && (
-                <Txt style={s.muted}>No monthly dues scheduled.</Txt>
-              )}
-              {state.dues.map((d) => (
-                <View
-                  key={d.id}
-                  style={{
-                    gap: 10,
-                    padding: 14,
-                    borderWidth: 1,
-                    borderColor: C.line,
-                    borderRadius: 10,
-                  }}
-                >
-                  <Txt style={{ fontFamily: "DMBold" }}>
-                    {fmt(d.cents)} to {recipientName(d.recipient)}
-                  </Txt>
-                  <Txt>
-                    Day {d.day} each month (UTC) ·{" "}
-                    {d.automatic ? "Bank autopay" : "Reminder only"}
-                    {st.demo ? " · Demo" : ""}
-                  </Txt>
-                  <Button
-                    secondary
-                    small
-                    label={`Cancel monthly due to ${recipientName(d.recipient)}`}
-                    disabled={busy}
-                    onPress={() =>
-                      void run(async () => {
-                        if (st.demo)
-                          await persist({
-                            ...state,
-                            dues: state.dues.filter((x) => x.id !== d.id),
-                          });
-                        else {
-                          await paymentAction("cancel_due", { id: d.id });
-                          await load();
-                        }
-                        setMessage(
-                          "Monthly due canceled. Any payment already processing may still complete.",
-                        );
-                      })
-                    }
-                  />
-                </View>
-              ))}
-              <View style={s.divider} />
-              <Title style={{ fontSize: 22 }}>Stay on time</Title>
-              <Txt style={{ lineHeight: 21 }}>
-                Get reminders for your monthly dues by email and text. Email
-                goes to your verified account email. You can turn either channel
-                off at any time.
-              </Txt>
-              <Toggle
-                label="Email payment reminders"
-                value={email}
-                onChange={setEmail}
-              />
-              <Toggle
-                label="Text payment reminders"
-                value={sms}
-                onChange={setSms}
-              />
-              <Field
-                label="Reminder phone number"
-                value={phone}
-                onChangeText={(v: string) => {
-                  setPhone(v);
-                  setPhoneVerified(false);
-                }}
-                keyboardType="phone-pad"
-                placeholder="+14155550123"
-              />
-              <Toggle
-                label="I agree to receive payment reminders and verification texts. Message/data rates may apply; reply STOP to stop texts"
-                value={consent}
-                onChange={setConsent}
-              />
-              <Button
-                secondary
-                small
-                label="Send phone verification code"
-                disabled={busy || !consent}
-                onPress={() => void run(() => verifyPhone(false))}
-              />
-              <Field
-                label="Phone verification code"
-                value={code}
-                onChangeText={setCode}
-                keyboardType="number-pad"
-                placeholder={st.demo ? "Demo: 123456" : "Code from your text"}
-              />
-              <Button
-                secondary
-                small
-                label="Verify phone"
-                disabled={busy || !consent}
-                onPress={() => void run(() => verifyPhone(true))}
-              />
-              {phoneVerified && (
-                <Txt style={{ color: C.green }}>Phone verified.</Txt>
-              )}
-              <Txt style={s.label}>REMIND ME</Txt>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                {[7, 3, 1, 0].map((d) => (
-                  <Chip
-                    key={d}
-                    label={
-                      d
-                        ? `${d} day${d === 1 ? "" : "s"} before`
-                        : "On the due date"
-                    }
-                    active={days === d}
-                    onPress={() => setDays(d)}
-                  />
-                ))}
-              </View>
-              <Button
-                label="Save reminder preferences"
-                disabled={busy}
-                onPress={() => void run(saveReminders)}
-              />
-              <View style={s.divider} />
-              <Title style={{ fontSize: 22 }}>Payment activity</Title>
-              <Txt style={s.muted}>
-                Only confirmed payments update household balances. Manual
-                repayment records remain separate.
-              </Txt>
-              {state.payments.length === 0 && (
-                <Txt style={s.muted}>No bank or card payments yet.</Txt>
-              )}
-              {state.payments.map((p) => (
-                <View key={p.id} style={{ gap: 5, paddingVertical: 10 }}>
-                  <Txt style={{ fontFamily: "DMBold" }}>
-                    {fmt(p.cents)} to {recipientName(p.recipient)} · {p.status}
-                    {st.demo ? " (demo)" : ""}
-                  </Txt>
+              {section === "Accounts" && (
+                <>
+                  <Title style={{ fontSize: 22 }}>Your payment methods</Title>
                   <Txt style={s.muted}>
-                    Surcharge {fmt(p.fee)} · Total {fmt(p.cents + p.fee)} ·{" "}
-                    {p.created_at.slice(0, 10)}
+                    Bank & debit: no surcharge. Credit cards: 2.5% of the
+                    payment amount.
                   </Txt>
-                  {p.status === "requires_action" && !st.demo && (
+                  <View
+                    style={{
+                      backgroundColor: C.bg,
+                      borderRadius: 12,
+                      padding: 16,
+                      gap: 7,
+                    }}
+                  >
+                    <Txt style={{ fontFamily: "DMBold" }}>
+                      1. Add a way to pay
+                    </Txt>
+                    <Txt style={{ lineHeight: 21 }}>
+                      Link a bank with your account and routing numbers, or add
+                      a card. Bank payments avoid the credit card surcharge.
+                    </Txt>
+                    <Txt style={{ fontFamily: "DMBold", marginTop: 5 }}>
+                      2. Add a bank to receive money
+                    </Txt>
+                    <Txt style={{ lineHeight: 21 }}>
+                      Complete receiving-bank setup below so roommates can pay
+                      you directly.
+                    </Txt>
+                  </View>
+                  <View
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}
+                  >
                     <Button
                       secondary
-                      small
-                      label="Complete payment authentication"
-                      disabled={busy}
-                      onPress={() =>
-                        void run(async () => {
-                          const response = await paymentAction("authenticate", {
-                            id: p.id,
-                          });
-                          if (
-                            response.url &&
-                            new URL(response.url).protocol === "https:"
-                          )
-                            await Linking.openURL(response.url);
-                          else
-                            setMessage(
-                              "Refresh payment status. If authentication is still required, use a different method after canceling this payment with support.",
-                            );
-                        })
-                      }
+                      label={st.demo ? "Add sample bank" : "Link bank account"}
+                      icon="Link"
+                      disabled={busy || !state.available}
+                      onPress={() => void run(() => setup("bank"))}
                     />
-                  )}
-                  {[
-                    "failed",
-                    "requires_action",
-                    "refunded",
-                    "disputed",
-                  ].includes(p.status) && (
-                    <Txt style={{ color: C.red }}>
-                      This payment needs attention. Check with support before
-                      trying another payment.
+                    <Button
+                      secondary
+                      label={st.demo ? "Add sample credit card" : "Add card"}
+                      icon="Wallet"
+                      disabled={busy || !state.available}
+                      onPress={() => void run(() => setup("card"))}
+                    />
+                  </View>
+                  {state.methods.length === 0 && (
+                    <Txt style={s.muted}>
+                      Add a bank account or card to get started.
                     </Txt>
                   )}
-                </View>
-              ))}
+                  {state.methods.map((m) => (
+                    <View
+                      key={m.id}
+                      style={[s.row, { gap: 8, flexWrap: "wrap" }]}
+                    >
+                      <Chip
+                        active={selected === m.id}
+                        label={m.label}
+                        onPress={() => {
+                          setSelected(m.id);
+                          setReview(null);
+                          setAuthorize(false);
+                        }}
+                      />
+                      <Button
+                        secondary
+                        small
+                        label={`Remove ${m.label}`}
+                        disabled={busy}
+                        onPress={() =>
+                          void run(async () => {
+                            if (
+                              state.dues.some(
+                                (d) => d.automatic && d.method === m.id,
+                              )
+                            )
+                              throw new Error(
+                                "Cancel automatic dues using this method before removing it.",
+                              );
+                            if (st.demo) {
+                              await persist({
+                                ...state,
+                                methods: state.methods.filter(
+                                  (x) => x.id !== m.id,
+                                ),
+                              });
+                              if (selected === m.id) setSelected("");
+                            } else {
+                              await paymentAction("remove_method", {
+                                id: m.id,
+                              });
+                              await load();
+                            }
+                            setReview(null);
+                          })
+                        }
+                      />
+                    </View>
+                  ))}
+                  <View style={s.divider} />
+                  <Title style={{ fontSize: 22 }}>Receive payments</Title>
+                  <Txt style={{ lineHeight: 21 }}>
+                    Set up your receiving bank with account and routing numbers
+                    through Stripe. This is separate from the bank account used
+                    to pay. Bank deposits follow the provider’s payout schedule.
+                  </Txt>
+                  <Txt style={{ color: state.payoutReady ? C.green : C.muted }}>
+                    {state.payoutReady
+                      ? "Receiving payments is ready."
+                      : "Receiving payments is not set up."}
+                  </Txt>
+                  <Button
+                    secondary
+                    label={
+                      st.demo
+                        ? "Set up sample receiving bank"
+                        : "Set up receiving bank"
+                    }
+                    disabled={busy || !state.available}
+                    onPress={() => void run(() => setup("payout"))}
+                  />
+                  <Button
+                    label="Continue to payment"
+                    icon="ArrowRight"
+                    onPress={() => setSection("Pay")}
+                  />
+                </>
+              )}
+              {(section === "Pay" || section === "Autopay") && (
+                <>
+                  <Title style={{ fontSize: 22 }}>
+                    {section === "Pay"
+                      ? "Make a payment"
+                      : "Set up monthly dues"}
+                  </Title>
+                  <Txt style={s.label}>PAY WITH</Txt>
+                  {state.methods.length === 0 ? (
+                    <>
+                      <Txt>
+                        Add a bank account or card before making a payment.
+                      </Txt>
+                      <Button
+                        secondary
+                        label="Go to accounts"
+                        onPress={() => setSection("Accounts")}
+                      />
+                    </>
+                  ) : (
+                    <View
+                      style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                    >
+                      {state.methods.map((m) => (
+                        <Chip
+                          key={m.id}
+                          active={selected === m.id}
+                          label={`${m.label} · ${m.funding === "credit" ? "2.5% fee" : "No surcharge"}`}
+                          onPress={() => {
+                            setSelected(m.id);
+                            setReview(null);
+                            setAuthorize(false);
+                          }}
+                        />
+                      ))}
+                    </View>
+                  )}
+                  <Txt style={s.label}>PAY TO</Txt>
+                  <View
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                  >
+                    {[
+                      ...roommates.map((m) => ({ id: m.id, name: m.name })),
+                      ...(state.appDues
+                        ? [{ id: "app", name: "SplitCart app dues" }]
+                        : []),
+                    ].map((m) => (
+                      <Chip
+                        key={m.id}
+                        label={m.name}
+                        active={to === m.id}
+                        onPress={() => {
+                          setTo(m.id);
+                          setReview(null);
+                          setAuthorize(false);
+                        }}
+                      />
+                    ))}
+                  </View>
+                  {to === "app" ? (
+                    <Txt>App dues: {fmt(state.appDues)}</Txt>
+                  ) : (
+                    <Field
+                      label="Payment amount (USD)"
+                      value={amount}
+                      onChangeText={(v: string) => {
+                        setAmount(v);
+                        setReview(null);
+                        setAuthorize(false);
+                      }}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                    />
+                  )}
+                  {estimate && section === "Pay" && !review && (
+                    <View
+                      style={{
+                        padding: 16,
+                        backgroundColor: C.sage,
+                        borderRadius: 12,
+                        gap: 8,
+                      }}
+                    >
+                      <Txt>Recipient receives: {fmt(estimate.cents)}</Txt>
+                      <Txt>
+                        {method?.funding === "credit"
+                          ? "Credit card surcharge (2.5%)"
+                          : "Bank / debit surcharge"}
+                        : {fmt(estimate.fee)}
+                      </Txt>
+                      <Txt style={{ fontFamily: "DMBold", fontSize: 20 }}>
+                        Estimated total: {fmt(estimate.total)}
+                      </Txt>
+                      {method?.funding === "credit" && (
+                        <Txt>
+                          Choose a bank account to save {fmt(estimate.fee)}.
+                        </Txt>
+                      )}
+                    </View>
+                  )}
+                  {section === "Pay" && (
+                    <>
+                      <Button
+                        label="Review payment"
+                        disabled={
+                          busy ||
+                          !method ||
+                          !state.available ||
+                          st.household!.currency !== "USD"
+                        }
+                        onPress={() => void run(async () => reviewPayment())}
+                      />
+                      {review && (
+                        <View
+                          style={{
+                            padding: 17,
+                            gap: 13,
+                            backgroundColor: C.sage,
+                            borderRadius: 12,
+                          }}
+                        >
+                          <Txt style={{ fontFamily: "DMBold" }}>
+                            Review {st.demo ? "demo " : ""}payment to{" "}
+                            {recipientName(review.recipient)}
+                          </Txt>
+                          <Txt>Payment: {fmt(review.cents)}</Txt>
+                          <Txt>
+                            Paying with:{" "}
+                            {
+                              state.methods.find((m) => m.id === review.method)
+                                ?.label
+                            }
+                          </Txt>
+                          <Txt>
+                            Credit card surcharge (2.5% on credit only):{" "}
+                            {fmt(review.fee)}
+                          </Txt>
+                          <Txt style={{ fontFamily: "DMBold", fontSize: 20 }}>
+                            Total charged: {fmt(review.total)}
+                          </Txt>
+                          <Txt style={{ fontSize: 12, lineHeight: 20 }}>
+                            By confirming, you authorize this one-time charge to
+                            your selected method. Your roommate receives the
+                            payment amount; the surcharge does not reduce your
+                            dues. Bank payments can take several business days.
+                          </Txt>
+                          <Button
+                            label={
+                              st.demo
+                                ? "Confirm demo payment"
+                                : `Pay ${fmt(review.total)}`
+                            }
+                            loading={busy}
+                            onPress={() => void run(pay)}
+                          />
+                          <Button
+                            secondary
+                            label="Cancel payment review"
+                            disabled={busy}
+                            onPress={() => setReview(null)}
+                          />
+                        </View>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+              {section === "Autopay" && (
+                <>
+                  <Title style={{ fontSize: 22 }}>Monthly dues & autopay</Title>
+                  <Txt style={{ lineHeight: 21 }}>
+                    Use the recipient and amount on this screen to schedule a
+                    fixed monthly due. Due dates use UTC. Automatic payment uses
+                    a linked bank account with no surcharge; it does not
+                    automatically pay a changing household balance.
+                  </Txt>
+                  <Field
+                    label="Monthly due day (1–28, UTC)"
+                    value={day}
+                    onChangeText={(v: string) => {
+                      setDay(v);
+                      setAuthorize(false);
+                    }}
+                    keyboardType="number-pad"
+                  />
+                  {automatic && method?.funding !== "bank" && (
+                    <Txt style={{ color: C.red }} accessibilityRole="alert">
+                      Select a linked bank above to use autopay. Cards cannot be
+                      used for automatic dues.
+                    </Txt>
+                  )}
+                  {automatic && method?.funding === "bank" && (
+                    <Txt style={{ color: C.green }}>
+                      Bank autopay · No surcharge · Cancel anytime below
+                    </Txt>
+                  )}
+                  <Toggle
+                    label="Automatically pay this monthly due"
+                    value={automatic}
+                    onChange={(v) => {
+                      setAutomatic(v);
+                      setAuthorize(false);
+                    }}
+                  />
+                  {automatic && (
+                    <Toggle
+                      label="I authorize the selected bank account to be charged this amount each month on the due day until I cancel"
+                      value={authorize}
+                      onChange={setAuthorize}
+                    />
+                  )}
+                  <Button
+                    secondary
+                    label="Save monthly due"
+                    disabled={
+                      busy ||
+                      (automatic && (!method || !state.available)) ||
+                      st.household!.currency !== "USD"
+                    }
+                    onPress={() => void run(saveDue)}
+                  />
+                  {state.dues.length === 0 && (
+                    <Txt style={s.muted}>No monthly dues scheduled.</Txt>
+                  )}
+                  {state.dues.map((d) => (
+                    <View
+                      key={d.id}
+                      style={{
+                        gap: 10,
+                        padding: 14,
+                        borderWidth: 1,
+                        borderColor: C.line,
+                        borderRadius: 10,
+                      }}
+                    >
+                      <Txt style={{ fontFamily: "DMBold" }}>
+                        {fmt(d.cents)} to {recipientName(d.recipient)}
+                      </Txt>
+                      <Txt>
+                        Day {d.day} each month (UTC) ·{" "}
+                        {d.automatic ? "Bank autopay" : "Reminder only"}
+                        {st.demo ? " · Demo" : ""}
+                      </Txt>
+                      <Button
+                        secondary
+                        small
+                        label={`Cancel monthly due to ${recipientName(d.recipient)}`}
+                        disabled={busy}
+                        onPress={() =>
+                          void run(async () => {
+                            if (st.demo)
+                              await persist({
+                                ...state,
+                                dues: state.dues.filter((x) => x.id !== d.id),
+                              });
+                            else {
+                              await paymentAction("cancel_due", { id: d.id });
+                              await load();
+                            }
+                            setMessage(
+                              "Monthly due canceled. Any payment already processing may still complete.",
+                            );
+                          })
+                        }
+                      />
+                    </View>
+                  ))}
+                  <Button
+                    secondary
+                    label="Set up payment reminders"
+                    icon="Mail"
+                    onPress={() => setSection("Reminders")}
+                  />
+                </>
+              )}
+              {section === "Reminders" && (
+                <>
+                  <Title style={{ fontSize: 22 }}>Stay on time</Title>
+                  <Txt style={{ lineHeight: 21 }}>
+                    Get reminders for your monthly dues by email and text. Email
+                    goes to your verified account email. You can turn either
+                    channel off at any time.
+                  </Txt>
+                  <Toggle
+                    label="Email payment reminders"
+                    value={email}
+                    onChange={setEmail}
+                  />
+                  <Toggle
+                    label="Text payment reminders"
+                    value={sms}
+                    onChange={setSms}
+                  />
+                  <Txt style={s.muted}>
+                    {state.dues.length
+                      ? `${state.dues.length} monthly due${state.dues.length === 1 ? "" : "s"} scheduled.`
+                      : "No monthly dues yet. Schedule a due in Autopay for these reminders to apply."}{" "}
+                    Reminders use UTC due dates.
+                  </Txt>
+                  <Txt style={{ color: phoneVerified ? C.green : C.muted }}>
+                    {phoneVerified
+                      ? "Text number verified"
+                      : "Verify your number to enable text reminders"}
+                  </Txt>
+                  <Field
+                    label="Reminder phone number"
+                    value={phone}
+                    onChangeText={(v: string) => {
+                      setPhone(v);
+                      setPhoneVerified(false);
+                    }}
+                    keyboardType="phone-pad"
+                    placeholder="+14155550123"
+                  />
+                  <Toggle
+                    label="I agree to receive payment reminders and verification texts. Message/data rates may apply; reply STOP to stop texts"
+                    value={consent}
+                    onChange={setConsent}
+                  />
+                  {!phoneVerified && (
+                    <>
+                      <Button
+                        secondary
+                        small
+                        label="Send phone verification code"
+                        disabled={busy || !consent}
+                        onPress={() => void run(() => verifyPhone(false))}
+                      />
+                      <Field
+                        label="Phone verification code"
+                        value={code}
+                        onChangeText={setCode}
+                        keyboardType="number-pad"
+                        placeholder={
+                          st.demo ? "Demo: 123456" : "Code from your text"
+                        }
+                      />
+                      <Button
+                        secondary
+                        small
+                        label="Verify phone"
+                        disabled={busy || !consent}
+                        onPress={() => void run(() => verifyPhone(true))}
+                      />
+                    </>
+                  )}
+                  <Txt style={s.label}>REMIND ME</Txt>
+                  <View
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                  >
+                    {[7, 3, 1, 0].map((d) => (
+                      <Chip
+                        key={d}
+                        label={
+                          d
+                            ? `${d} day${d === 1 ? "" : "s"} before`
+                            : "On the due date"
+                        }
+                        active={days === d}
+                        onPress={() => setDays(d)}
+                      />
+                    ))}
+                  </View>
+                  <Button
+                    label="Save reminder preferences"
+                    disabled={busy}
+                    onPress={() => void run(saveReminders)}
+                  />
+                  <Txt style={s.muted}>
+                    {days
+                      ? `${days} day${days === 1 ? "" : "s"} before each due date`
+                      : "On each due date"}{" "}
+                    · Email {email ? "on" : "off"} · Text {sms ? "on" : "off"}.
+                    Save to apply changes.
+                  </Txt>
+                </>
+              )}
+              {section === "Activity" && (
+                <>
+                  <Title style={{ fontSize: 22 }}>Payment activity</Title>
+                  <Txt style={s.muted}>
+                    Only confirmed payments update household balances. Manual
+                    repayment records remain separate.
+                  </Txt>
+                  {state.payments.length === 0 && (
+                    <Txt style={s.muted}>No bank or card payments yet.</Txt>
+                  )}
+                  {state.payments.map((p) => (
+                    <View key={p.id} style={{ gap: 5, paddingVertical: 10 }}>
+                      <Txt style={{ fontFamily: "DMBold" }}>
+                        {fmt(p.cents)} to {recipientName(p.recipient)} ·{" "}
+                        {p.status}
+                        {st.demo ? " (demo)" : ""}
+                      </Txt>
+                      <Txt style={s.muted}>
+                        Surcharge {fmt(p.fee)} · Total {fmt(p.cents + p.fee)} ·{" "}
+                        {p.created_at.slice(0, 10)}
+                      </Txt>
+                      {p.status === "requires_action" && !st.demo && (
+                        <Button
+                          secondary
+                          small
+                          label="Complete payment authentication"
+                          disabled={busy}
+                          onPress={() =>
+                            void run(async () => {
+                              const response = await paymentAction(
+                                "authenticate",
+                                {
+                                  id: p.id,
+                                },
+                              );
+                              if (
+                                response.url &&
+                                new URL(response.url).protocol === "https:"
+                              )
+                                await Linking.openURL(response.url);
+                              else
+                                setMessage(
+                                  "Refresh payment status. If authentication is still required, use a different method after canceling this payment with support.",
+                                );
+                            })
+                          }
+                        />
+                      )}
+                      {[
+                        "failed",
+                        "requires_action",
+                        "refunded",
+                        "disputed",
+                      ].includes(p.status) && (
+                        <Txt style={{ color: C.red }}>
+                          This payment needs attention. Check with support
+                          before trying another payment.
+                        </Txt>
+                      )}
+                    </View>
+                  ))}
+                </>
+              )}
             </>
           )}
         </>

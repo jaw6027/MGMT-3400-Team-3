@@ -152,3 +152,7 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 ## Bank/card payments, automatic dues, and payment reminders
 
 Open **Balances → Manage payments** for hosted bank/card setup, receiving-bank onboarding, a payment review with a **2.5% credit-card-only surcharge**, fixed monthly bank autopay, and verified email/text reminder preferences. Demo mode uses sample accounts and simulated payments; it never moves funds or sends messages. Live use requires the additional migration, deployed Edge Function, Stripe Connect, Twilio, Resend, and a recurring job. See [payment setup and operational details](docs/payments.md) for configuration, test steps, and current limits.
+
+Payment controls are organized into **Accounts**, **Pay**, **Autopay**, **Reminders**, and **Activity**. Accounts explains paying versus receiving setup. Pay shows a running fee estimate and the selected method in the final confirmation. Autopay keeps the recipient, amount, bank, and consent together. Reminders shows phone verification and timing, hiding completed verification steps until the number changes. Autopay covers fixed monthly dues, not a changing household balance; reminder dates use UTC.
+
+Screenshots of the actual sample-account flows: [all four screens](docs/previews/overview.png), [bank and card setup](docs/previews/accounts.png), [credit-card fee preview](docs/previews/payment.png), [monthly bank autopay](docs/previews/autopay.png), and [email/text reminders](docs/previews/reminders.png).

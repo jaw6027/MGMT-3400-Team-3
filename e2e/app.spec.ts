@@ -166,7 +166,11 @@ test("payments: credit surcharge is disclosed and only principal settles the dem
   await page
     .getByRole("button", { name: "Add sample credit card", exact: true })
     .click();
+  await page.getByRole("button", { name: "Pay", exact: true }).click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("10.20");
+  await expect(
+    page.getByText("Estimated total: $10.46", { exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Review payment", exact: true })
     .click();
@@ -191,6 +195,7 @@ test("payments: credit surcharge is disclosed and only principal settles the dem
     return JSON.parse(localStorage.getItem(key)!).payments[0];
   });
   expect(payment.fee).toBe(26);
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page
     .getByRole("button", { name: "Add sample bank", exact: true })
     .click();
@@ -199,6 +204,10 @@ test("payments: credit surcharge is disclosed and only principal settles the dem
     .click();
   await expect(
     page.getByText("Receiving payments is ready.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Pay", exact: true }).click();
+  await expect(
+    page.getByText("Estimated total: $10.20", { exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Review payment", exact: true })
@@ -221,6 +230,7 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
   await page
     .getByRole("button", { name: "Add sample bank", exact: true })
     .click();
+  await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("25");
   await page
     .getByLabel("Monthly due day (1–28, UTC)", { exact: true })
@@ -253,6 +263,7 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
       exact: true,
     }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page
     .getByRole("button", {
       name: "Remove Demo checking •••• 6789",
@@ -265,6 +276,7 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
       { exact: true },
     ),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Reminders", exact: true }).click();
   await page
     .getByLabel("Reminder phone number", { exact: true })
     .fill("+12025550123");
@@ -302,6 +314,7 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
   await page
     .getByRole("button", { name: "Manage payments", exact: true })
     .click();
+  await page.getByRole("button", { name: "Reminders", exact: true }).click();
   await expect(
     page.getByLabel("Reminder phone number", { exact: true }),
   ).toHaveValue("+12025550123");
@@ -314,6 +327,7 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
   await expect(
     page.getByRole("button", { name: "1 day before", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page
     .getByRole("button", {
       name: "Cancel monthly due to Jordan Lee",
