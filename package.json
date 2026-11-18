@@ -10,10 +10,11 @@
     "web": "expo start --web --host lan",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:db": "vitest run src/database.test.ts",
+    "test:db": "vitest run src/database.test.ts src/households-database.test.ts src/payments-database.test.ts",
     "build:web": "expo export --platform web",
     "test:e2e": "playwright test",
-    "format": "prettier --write App.tsx src e2e *.ts *.json"
+    "format": "prettier --write App.tsx src e2e *.ts *.json",
+    "test:e2e:households": "playwright test --config playwright.households.config.ts"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",

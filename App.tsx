@@ -7,6 +7,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   TextInput,
   useWindowDimensions,
   View,
@@ -21,6 +22,11 @@ import { DMSans_600SemiBold } from "@expo-google-fonts/dm-sans/600SemiBold";
 import { DMSans_700Bold } from "@expo-google-fonts/dm-sans/700Bold";
 import { Fraunces_500Medium } from "@expo-google-fonts/fraunces/500Medium";
 import * as ImagePicker from "expo-image-picker";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  normalizeHouseholdIntent,
+  signUpWithHousehold,
+} from "./src/households";
 import { Provider, useStore } from "./src/store";
 import {
   balances,
@@ -339,7 +345,12 @@ function Main() {
             ]}
           >
             {desktop ? (
-              <View style={[s.row, { gap: 9 }]}>
+              <View
+                style={[
+                  s.row,
+                  { gap: 9, flex: 1, minWidth: 0, marginRight: 16 },
+                ]}
+              >
                 <View
                   style={{
                     backgroundColor: C.sage,
@@ -349,7 +360,10 @@ function Main() {
                 >
                   <Icon name="Home" size={17} color={C.green} />
                 </View>
-                <Txt style={{ fontFamily: "DMSemi", fontSize: 13 }}>
+                <Txt
+                  numberOfLines={1}
+                  style={{ fontFamily: "DMSemi", fontSize: 13, flexShrink: 1 }}
+                >
                   {store.household.name}
                 </Txt>
                 <Icon name="ChevronDown" size={14} color={C.muted} />
@@ -789,7 +803,7 @@ function Main() {
                           >
                             <Icon name="Home" color={C.green} />
                           </View>
-                          <View>
+                          <View style={{ flex: 1, minWidth: 0 }}>
                             <Txt style={{ fontFamily: "DMBold", fontSize: 13 }}>
                               {store.household.name}
                             </Txt>
@@ -936,6 +950,23 @@ function Main() {
           <Icon name="CheckCircle2" size={18} color="#DAE9D0" />
           <Txt style={{ color: C.white, fontSize: 12 }}>{toast}</Txt>
         </View>
+      )}
+      {store.householdWelcome && (
+        <Sheet
+          title="Your household is ready"
+          onClose={store.dismissHouseholdWelcome}
+        >
+          <Title style={{ fontSize: 27 }}>{store.household.name}</Title>
+          <HouseholdInvitation notify={notify} />
+          <Button
+            label="Go to dashboard"
+            icon="ArrowRight"
+            onPress={() => {
+              store.dismissHouseholdWelcome();
+              setTab("Overview");
+            }}
+          />
+        </Sheet>
       )}
       {editor !== undefined && (
         <PurchaseEditor
@@ -2154,9 +2185,96 @@ function RepayModal({
     </Sheet>
   );
 }
+function HouseholdInvitation({
+  notify,
+}: {
+  notify: (message: string) => void;
+}) {
+  const st = useStore();
+  const [error, setError] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const share = async () => {
+    if (sharing) return;
+    setSharing(true);
+    setError("");
+    try {
+      const code = st.household!.invite_code;
+      if (Platform.OS === "web") {
+        if (!navigator.clipboard)
+          throw new Error(
+            "Select the code above to copy it, then share it privately with your roommates.",
+          );
+        await navigator.clipboard.writeText(code);
+        notify(
+          "Invitation code copied. Share it privately with your roommates.",
+        );
+      } else {
+        await Share.share({
+          message: `Join ${st.household!.name} on SplitCart. Create your own account, choose “Join with a code”, and enter: ${code}`,
+        });
+      }
+    } catch (e: any) {
+      setError(e.message || "Select and copy the code above to share it.");
+    } finally {
+      setSharing(false);
+    }
+  };
+  return (
+    <View style={{ gap: 14 }}>
+      <Title style={{ fontSize: 23 }}>Invite your roommates</Title>
+      <Txt style={{ color: C.muted, fontSize: 12, lineHeight: 20 }}>
+        Everyone creates their own login. Ask them to choose “Join with a code”
+        during signup and enter your household’s code below.
+      </Txt>
+      <View style={{ backgroundColor: C.sage, padding: 17, borderRadius: 10 }}>
+        <Txt
+          selectable
+          accessibilityLabel="Household invitation code"
+          style={{
+            fontFamily: "DMBold",
+            fontSize: 17,
+            letterSpacing: 1,
+            color: C.green,
+          }}
+        >
+          {st.household &&
+            (/^[a-f0-9]{32}$/i.test(st.household.invite_code)
+              ? st.household.invite_code.match(/.{1,4}/g)?.join(" ")
+              : st.household.invite_code)}
+        </Txt>
+      </View>
+      <Button
+        secondary
+        icon="Copy"
+        label={
+          Platform.OS === "web"
+            ? "Copy invitation code"
+            : "Share invitation code"
+        }
+        loading={sharing}
+        onPress={share}
+      />
+      <Txt style={{ fontSize: 11, color: C.muted, lineHeight: 18 }}>
+        {st.demo
+          ? "Sample code only. Enable live accounts to invite real roommates."
+          : "This code gives access to your household’s shared purchases and receipts. Share it only with your roommates."}
+      </Txt>
+      {error !== "" && (
+        <Txt accessibilityRole="alert" style={{ color: C.red }}>
+          {error}
+        </Txt>
+      )}
+    </View>
+  );
+}
+
 function HouseholdSettings({ notify }: { notify: (m: string) => void }) {
   const st = useStore();
   const self = st.members.find((m) => m.user_id === st.user?.id)!;
+  const [houseName, setHouseName] = useState(st.household?.name || "");
+  useEffect(() => {
+    setHouseName(st.household?.name || "");
+  }, [st.household?.name]);
   const [name, setName] = useState(self.name),
     [busy, setBusy] = useState(false),
     [leave, setLeave] = useState(false),
@@ -2221,36 +2339,35 @@ function HouseholdSettings({ notify }: { notify: (m: string) => void }) {
           </View>
         ))}
       </View>
-      <View style={[s.card, { gap: 14 }]}>
-        <Title style={{ fontSize: 23 }}>Make room for one more</Title>
-        <Txt style={{ color: C.muted, fontSize: 12, lineHeight: 20 }}>
-          Share this invitation code privately with your new roommate. They can
-          enter it when joining a household.
+      <View style={[s.card, { gap: 17 }]}>
+        <Title style={{ fontSize: 23 }}>Make it your home</Title>
+        <Field
+          label="Household name"
+          value={houseName}
+          onChangeText={setHouseName}
+          placeholder="Choose any name, up to 80 characters"
+          maxLength={80}
+        />
+        <Txt style={s.muted}>
+          Any current roommate can update the name. Your code and shared history
+          stay the same.
         </Txt>
-        <View
-          style={[
-            s.between,
-            { backgroundColor: C.sage, padding: 17, borderRadius: 10 },
-          ]}
-        >
-          <Txt
-            selectable
-            style={{
-              fontFamily: "DMBold",
-              letterSpacing: 2,
-              fontSize: 18,
-              color: C.green,
-            }}
-          >
-            {st.household?.invite_code}
-          </Txt>
-          <Icon name="Link" size={20} color={C.green} />
-        </View>
-        {st.demo && (
-          <Txt style={{ fontSize: 11, color: C.muted }}>
-            Sample code only. Enable live accounts to invite real roommates.
-          </Txt>
-        )}
+        <Button
+          secondary
+          label="Save household name"
+          icon="Check"
+          loading={busy}
+          onPress={() =>
+            run(
+              () => st.renameHousehold(houseName),
+              "Your household name has been updated.",
+            )
+          }
+          style={{ alignSelf: "flex-start" }}
+        />
+      </View>
+      <View style={s.card}>
+        <HouseholdInvitation notify={notify} />
       </View>
       <View style={[s.card, { gap: 17 }]}>
         <Title style={{ fontSize: 23 }}>Your profile</Title>
@@ -2355,12 +2472,97 @@ function HouseholdSettings({ notify }: { notify: (m: string) => void }) {
     </>
   );
 }
+type HouseholdChoicesProps = {
+  join: boolean;
+  setJoin: (value: boolean) => void;
+  name: string;
+  setName: (value: string) => void;
+  code: string;
+  setCode: (value: string) => void;
+  currency: string;
+  setCurrency: (value: string) => void;
+};
+function HouseholdChoices({
+  join,
+  setJoin,
+  name,
+  setName,
+  code,
+  setCode,
+  currency,
+  setCurrency,
+}: HouseholdChoicesProps) {
+  return (
+    <View style={{ gap: 17 }}>
+      <Txt style={{ fontFamily: "DMBold", fontSize: 13 }}>
+        Separate logins. One shared household.
+      </Txt>
+      <View style={{ flexDirection: "row", gap: 9, flexWrap: "wrap" }}>
+        <Chip
+          label="Create a household"
+          active={!join}
+          onPress={() => setJoin(false)}
+        />
+        <Chip
+          label="Join with a code"
+          active={join}
+          onPress={() => setJoin(true)}
+        />
+      </View>
+      {join ? (
+        <>
+          <Field
+            label="Invitation code"
+            value={code}
+            onChangeText={setCode}
+            placeholder="Code from your roommate"
+            autoCapitalize="none"
+            autoCorrect={false}
+            maxLength={128}
+          />
+          <Txt style={s.muted}>
+            Use your own email and password. This code links you to your
+            roommates’ household.
+          </Txt>
+        </>
+      ) : (
+        <>
+          <Field
+            label="Household name"
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. The Maple Street Crew"
+            maxLength={80}
+          />
+          <Txt style={s.muted}>
+            Choose any name. We’ll give you a private invitation code to share
+            after creating your household.
+          </Txt>
+          <Txt style={s.label}>HOUSEHOLD CURRENCY</Txt>
+          <View style={{ flexDirection: "row", gap: 7, flexWrap: "wrap" }}>
+            {["USD", "EUR", "GBP", "CAD", "AUD"].map((c) => (
+              <Chip
+                key={c}
+                label={c}
+                active={currency === c}
+                onPress={() => setCurrency(c)}
+              />
+            ))}
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
 function HouseholdSetup() {
   const st = useStore();
-  const [join, setJoin] = useState(false),
-    [name, setName] = useState(""),
-    [code, setCode] = useState(""),
-    [currency, setCurrency] = useState("USD"),
+  const pending = st.householdIntent;
+  const [join, setJoin] = useState(pending?.mode === "join"),
+    [name, setName] = useState(pending?.mode === "create" ? pending.name : ""),
+    [code, setCode] = useState(pending?.mode === "join" ? pending.code : ""),
+    [currency, setCurrency] = useState(
+      pending?.mode === "create" ? pending.currency : "USD",
+    ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const save = async () => {
@@ -2401,49 +2603,16 @@ function HouseholdSetup() {
             Create your shared space or join your roommates. We’ll handle the
             splitting.
           </Txt>
-          <View style={[s.row, { gap: 10, justifyContent: "center" }]}>
-            <Chip
-              label="Create a household"
-              active={!join}
-              onPress={() => setJoin(false)}
-            />
-            <Chip
-              label="Join a household"
-              active={join}
-              onPress={() => setJoin(true)}
-            />
-          </View>
-          {join ? (
-            <Field
-              label="Invitation code"
-              value={code}
-              onChangeText={setCode}
-              placeholder="Your roommate’s invitation code"
-            />
-          ) : (
-            <>
-              <Field
-                label="Household name"
-                value={name}
-                onChangeText={setName}
-                placeholder="e.g. The Green House"
-              />
-              <Txt style={s.label}>HOUSEHOLD CURRENCY</Txt>
-              <View style={{ flexDirection: "row", gap: 7, flexWrap: "wrap" }}>
-                {["USD", "EUR", "GBP", "CAD", "AUD"].map((c) => (
-                  <Chip
-                    key={c}
-                    label={c}
-                    active={currency === c}
-                    onPress={() => setCurrency(c)}
-                  />
-                ))}
-              </View>
-              <Txt style={s.muted}>
-                All purchases use this currency. No currency conversion.
-              </Txt>
-            </>
-          )}
+          <HouseholdChoices
+            join={join}
+            setJoin={setJoin}
+            name={name}
+            setName={setName}
+            code={code}
+            setCode={setCode}
+            currency={currency}
+            setCurrency={setCurrency}
+          />
           {(error || st.error) && (
             <Txt accessibilityRole="alert" style={{ color: C.red }}>
               {error || st.error}
@@ -2463,6 +2632,11 @@ function HouseholdSetup() {
 }
 function Auth() {
   const st = useStore();
+  const [join, setJoin] = useState(false),
+    [houseName, setHouseName] = useState(""),
+    [code, setCode] = useState(""),
+    [currency, setCurrency] = useState("USD");
+  const lock = useRef(false);
   const [signup, setSignup] = useState(false),
     [name, setName] = useState(""),
     [email, setEmail] = useState(""),
@@ -2471,7 +2645,8 @@ function Auth() {
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
   const submit = async () => {
-    if (busy) return;
+    if (lock.current) return;
+    lock.current = true;
     setError("");
     setMessage("");
     setBusy(true);
@@ -2481,22 +2656,38 @@ function Auth() {
         throw new Error("Enter a valid email address.");
       if (password.length < 8)
         throw new Error("Use a password with at least 8 characters.");
+      const intent = signup
+        ? normalizeHouseholdIntent(
+            join
+              ? { mode: "join", code }
+              : { mode: "create", name: houseName, currency },
+          )
+        : null;
       const c = client();
-      const { data, error } = signup
-        ? await c.auth.signUp({
-            email: email.trim(),
-            password,
-            options: { data: { name: name.trim() } },
-          })
-        : await c.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) throw error;
+      let data;
+      if (signup && intent) {
+        data = await signUpWithHousehold(c.auth, AsyncStorage, {
+          email,
+          password,
+          name,
+          household: intent,
+        });
+      } else {
+        const result = await c.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+        if (result.error) throw result.error;
+        data = result.data;
+      }
       if (signup && !data.session)
         setMessage(
-          "Check your email to confirm your account, then come back and log in.",
+          "Check your email to confirm your account, then come back and log in. Your household choice is saved on this device and will be completed after you log in.",
         );
     } catch (e: any) {
       setError(e.message);
     } finally {
+      lock.current = false;
       setBusy(false);
     }
   };
@@ -2544,6 +2735,20 @@ function Auth() {
             secureTextEntry
             placeholder="At least 8 characters"
           />
+          {signup && (
+            <View style={[s.card, { gap: 15 }]}>
+              <HouseholdChoices
+                join={join}
+                setJoin={setJoin}
+                name={houseName}
+                setName={setHouseName}
+                code={code}
+                setCode={setCode}
+                currency={currency}
+                setCurrency={setCurrency}
+              />
+            </View>
+          )}
           {error && (
             <Txt
               accessibilityRole="alert"

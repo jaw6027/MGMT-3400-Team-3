@@ -324,3 +324,30 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
     page.getByText("No monthly dues scheduled.", { exact: true }),
   ).toBeVisible();
 });
+
+test("household names persist and long names keep phone and desktop navigation usable", async ({
+  page,
+}) => {
+  const name = "OurSharedHome".repeat(6);
+  await page.getByRole("tab", { name: "Household", exact: true }).click();
+  await page.getByLabel("Household name", { exact: true }).fill(name);
+  await page
+    .getByRole("button", { name: "Save household name", exact: true })
+    .click();
+  await expect(
+    page.getByText("Your household name has been updated.", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1000, height: 900 });
+  const avatar = await page
+    .getByLabel("Household settings", { exact: true })
+    .boundingBox();
+  expect(avatar).not.toBeNull();
+  expect(avatar!.x + avatar!.width).toBeLessThanOrEqual(1000);
+});

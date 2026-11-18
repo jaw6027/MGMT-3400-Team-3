@@ -15,6 +15,14 @@ import {
   loadData,
   saveLiveExpense,
 } from "./backend";
+import {
+  HouseholdIntent,
+  clearPendingHousehold,
+  completeHouseholdSetup,
+  householdName,
+  pendingHousehold,
+} from "./households";
+type AccountUser = { id: string; name: string; email?: string };
 const empty: Data = {
   household: null,
   members: [],
@@ -25,9 +33,12 @@ const Context = createContext<any>(null);
 export function Provider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<Data>(empty),
     [demo, setDemo] = useState(demoDefault),
-    [user, setUser] = useState<{ id: string; name: string } | null>(null),
+    [user, setUser] = useState<AccountUser | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
+  const [householdIntent, setHouseholdIntent] =
+    useState<HouseholdIntent | null>(null);
+  const [householdWelcome, setHouseholdWelcome] = useState(false);
   const dataRef = useRef(data);
   dataRef.current = data;
   const refresh = async () => {
@@ -64,36 +75,81 @@ export function Provider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return;
     }
+    let loadedAccount: string | null = null;
     const sync = async (session: any) => {
       if (!alive) return;
+      const account = session?.user.id || null;
+      if (account !== loadedAccount) {
+        setData(empty);
+        setHouseholdIntent(null);
+        setHouseholdWelcome(false);
+        setError("");
+        loadedAccount = account;
+      }
+      setLoading(true);
       setUser(
         session
           ? {
               id: session.user.id,
+              email: session.user.email,
               name: session.user.user_metadata.name || "Roommate",
             }
           : null,
       );
       try {
         if (session) {
-          const d = await loadData();
+          let d = await loadData();
+          const email = session.user.email;
+          const intent = email
+            ? await pendingHousehold(AsyncStorage, email)
+            : null;
+          if (!alive) return;
+          setHouseholdIntent(intent);
+          if (intent && !d.household) {
+            try {
+              await completeHouseholdSetup(client(), intent);
+              await clearPendingHousehold(AsyncStorage, email);
+              d = await loadData();
+              if (!alive) return;
+              setHouseholdIntent(null);
+              setError("");
+              if (intent.mode === "create") setHouseholdWelcome(true);
+            } catch (e: any) {
+              if (alive) setError(`Your account is ready. ${e.message}`);
+            }
+          } else if (intent && d.household) {
+            await clearPendingHousehold(AsyncStorage, email);
+            if (alive) setHouseholdIntent(null);
+          }
           if (alive) setData(d);
-        } else setData(empty);
+        } else {
+          setData(empty);
+          setHouseholdIntent(null);
+          setHouseholdWelcome(false);
+        }
       } catch (e: any) {
         if (alive) setError(e.message);
       } finally {
         if (alive) setLoading(false);
       }
     };
+    // Serialize duplicate SIGNED_IN/TOKEN_REFRESHED events around onboarding.
+    let queue = Promise.resolve();
+    const enqueue = (session: any) => {
+      queue = queue.then(() => sync(session));
+      return queue;
+    };
     supabase.auth
       .getSession()
-      .then(({ data }) => sync(data.session))
+      .then(({ data }) => enqueue(data.session))
       .catch((e) => {
         setError(e.message);
         setLoading(false);
       });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setTimeout(() => sync(session), 0);
+      setTimeout(() => {
+        void enqueue(session);
+      }, 0);
     });
     return () => {
       alive = false;
@@ -154,6 +210,9 @@ export function Provider({ children }: { children: React.ReactNode }) {
     }
   };
   const household = async (name: string, code: string, currency: string) => {
+    const intent: HouseholdIntent = code
+      ? { mode: "join", code }
+      : { mode: "create", name: householdName(name), currency };
     if (demo) {
       if (code)
         throw new Error(
@@ -163,7 +222,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
       await persist({
         household: {
           id: "demo-custom",
-          name,
+          name: householdName(name),
           currency,
           invite_code: "DEMO-HOME",
         },
@@ -172,16 +231,32 @@ export function Provider({ children }: { children: React.ReactNode }) {
         repayments: [],
       });
     } else {
-      const { error } = await client().rpc(
-        code ? "join_household" : "create_household",
-        code
-          ? { code: code.trim() }
-          : { house_name: name.trim(), house_currency: currency },
-      );
+      await completeHouseholdSetup(client(), intent);
+      if (user?.email) await clearPendingHousehold(AsyncStorage, user.email);
+      await refresh();
+    }
+    setHouseholdIntent(null);
+    setError("");
+    if (intent.mode === "create") setHouseholdWelcome(true);
+  };
+  const renameHousehold = async (value: string) => {
+    const name = householdName(value);
+    if (!dataRef.current.household) throw new Error("Join a household first.");
+    if (demo)
+      await persist({
+        ...dataRef.current,
+        household: { ...dataRef.current.household, name },
+      });
+    else {
+      const { error } = await client().rpc("rename_household", {
+        household_id: dataRef.current.household.id,
+        house_name: name,
+      });
       if (error) throw error;
       await refresh();
     }
   };
+
   const profile = async (name: string) => {
     if (!name.trim()) throw new Error("Enter your name.");
     if (demo)
@@ -226,11 +301,17 @@ export function Provider({ children }: { children: React.ReactNode }) {
         deleteExpense,
         repay,
         householdAction: household,
+        householdIntent,
+        householdWelcome,
+        dismissHouseholdWelcome: () => setHouseholdWelcome(false),
+        renameHousehold,
         profile,
         leave,
         switchMode: () => {
           setData(empty);
           setUser(null);
+          setHouseholdIntent(null);
+          setHouseholdWelcome(false);
           setLoading(true);
           setDemo(!demo);
         },
@@ -254,7 +335,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
   );
 }
 export function useStore(): Data & {
-  user: { id: string; name: string } | null;
+  user: AccountUser | null;
   demo: boolean;
   loading: boolean;
   error: string;
@@ -264,6 +345,10 @@ export function useStore(): Data & {
   deleteExpense: (e: Expense) => Promise<void>;
   repay: (r: Repayment) => Promise<void>;
   householdAction: (n: string, c: string, curr: string) => Promise<void>;
+  householdIntent: HouseholdIntent | null;
+  householdWelcome: boolean;
+  dismissHouseholdWelcome: () => void;
+  renameHousehold: (name: string) => Promise<void>;
   profile: (n: string) => Promise<void>;
   leave: () => Promise<void>;
   switchMode: () => void;

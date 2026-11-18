@@ -208,6 +208,7 @@ export function Field({
   keyboardType,
   secureTextEntry,
   multiline = false,
+  ...inputProps
 }: any) {
   return (
     <View style={{ gap: 8, flex: 1, minWidth: 100 }}>
@@ -222,6 +223,7 @@ export function Field({
         secureTextEntry={secureTextEntry}
         multiline={multiline}
         autoCapitalize={keyboardType === "email-address" ? "none" : "sentences"}
+        {...inputProps}
         style={{
           borderWidth: 1,
           borderColor: C.line,

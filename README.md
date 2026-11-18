@@ -36,7 +36,7 @@ For a physical Android device, scan the QR code in compatible Expo Go or connect
 
 ## Enable the live Supabase backend
 
-1. Create a Supabase project. In its SQL Editor, run **all of** `supabase/migrations/202611140001_splitcart.sql` once. This creates tables, indexes, validation RPCs, RLS policies, and the private `receipts` bucket with its image allowlist and 5 MB limit. No manual public-bucket setup is necessary.
+1. Create a Supabase project. In its SQL Editor, apply every SQL file in `supabase/migrations/` **once, in filename order**. For an existing project, apply only migrations not already installed. The base migration creates tables, RLS, and private receipts; `202611170001_payments.sql` adds payment support; `202611180001_household_signup.sql` adds retry-safe signup onboarding and household renaming. No manual public-bucket setup is necessary.
 2. Copy your project URL and **public anon key** from Project Settings → API into `.env`:
 
    ```dotenv
@@ -48,8 +48,16 @@ For a physical Android device, scan the QR code in compatible Expo Go or connect
    Expo public variables are bundled into the app. **Never use a service-role key, database password, or other secret here.** The anon key identifies the project; authenticated JWTs and RLS control access. `.env` is gitignored.
 3. Enable email/password authentication in Supabase Auth. Configure your production email delivery and confirmation settings. For email confirmation, open the confirmation link in your email, then return to SplitCart and log in. Set the Auth Site URL to an accessible web URL (for local browser testing, `http://localhost:8081`). This MVP does not automatically import native confirmation-link sessions.
 4. Restart Expo after changing variables: `npx expo start --clear`.
-5. Sign up, log in, and create a household. Choose USD, EUR, GBP, CAD, or AUD. A household uses one currency and performs no conversion.
-6. Copy the invitation code from Household and share it privately. Another account can join with that code. Each account has one active household. Leaving preserves purchases, shares, membership names, and repayments. Rejoining the same household restores the original membership ID.
+5. During signup, the first roommate selects **Create a household**, chooses any household name (1–80 characters), and chooses USD, EUR, GBP, CAD, or AUD. After authentication, SplitCart creates the household and immediately displays its private invitation code. A household uses one currency and performs no conversion.
+6. Other roommates select **Join with a code** during signup, enter that code, and use **their own email address and password**. Once authenticated, each separate account joins the same household and sees its shared activity. Codes accept pasted spaces and either letter case. The code can be copied on web or shared through the native share sheet; find it again under **Household → Invite your roommates**. Each account has one active household. Leaving preserves purchases, shares, membership names, and repayments. Rejoining the same household restores the original membership ID.
+
+### Household signup and names
+
+Email confirmation remains required when configured in Supabase. SplitCart saves the household choice **on the signup device, keyed to that email address**, and finishes creating/joining only after the account signs in. Passwords are never saved in this pending choice, and invitation codes are not put into signup metadata or public URLs. If confirmation or login happens on another device, that device asks the user to enter the code or household name again. An invalid code leaves the new login intact and offers a correction screen; the user does not need to sign up twice.
+
+Any current member can change the name under **Household → Make it your home → Save household name**. Names do not have to be unique, so separate households can choose the same name. Renaming preserves membership, the invitation code, purchases, repayments, and payment setup. Only authenticated members of that household can rename it. Treat the high-entropy invitation code like a private invitation: anyone who receives it can join with their own authenticated account.
+
+Onboarding is serialized on the client and protected by a per-account transaction lock on the server. Retried signup completion does not create duplicate households or move an account that already belongs to a household. Existing create/join flows, expense permissions, and payment features remain available. Actual multiple-account membership requires the configured live backend; demo invitation codes are only samples.
 
 For local Supabase development, install the Supabase CLI and Docker, then run:
 
@@ -98,9 +106,10 @@ Browser tests:
 ```sh
 npx playwright install chromium
 npm run test:e2e
+npm run test:e2e:households
 ```
 
-Playwright starts Expo web automatically or uses an existing server on port 8081. To use a system Chromium, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chromium`. Tests cover phone purchase creation, invalid custom totals, edit/share preservation, receipt viewing, deletion confirmation, payer restrictions, repayments, profile persistence, desktop filtering, and the unconfigured live-login fallback. The fallback check assumes the example environment with empty live credentials.
+Playwright starts Expo web automatically or uses an existing server on port 8081. To use a system Chromium, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/path/to/chromium`. Tests cover phone purchase creation, invalid custom totals, edit/share preservation, receipt viewing, deletion confirmation, payer restrictions, repayments, profile persistence, desktop filtering, and the unconfigured live-login fallback. The fallback check assumes the example environment with empty live credentials. The separate household suite starts Expo on port 8082 with a clearly fictional Supabase endpoint. It simulates Auth HTTP responses while executing the real SQL migrations/RLS in PGlite, and exercises separate-account household signup, code-based joining, email-confirmation continuation, incorrect-code recovery, code copying, and renaming. It does not contact a hosted Supabase project.
 
 ## First-release boundaries
 
@@ -117,6 +126,7 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 - `src/core.ts` — integer money, validation, equal splits, balances, settlements, client permission helpers.
 - `src/backend.ts` — Supabase setup, paginated reads, private receipt uploads and signed URLs.
 - `src/store.tsx` — demo/live state, sessions, persistence, mutations.
+- `src/households.ts` — signup household choices, validation, email-bound continuation, and setup RPC calls.
 - `src/demo.ts` — sample household and local sample receipt.
 - `src/ui.tsx`, `src/Illustration.tsx` — design system and original basket artwork.
 - `supabase/migrations/` — deployable database and private storage setup.
