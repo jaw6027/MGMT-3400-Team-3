@@ -25,6 +25,12 @@ beforeAll(async () => {
   await db.exec(
     readFileSync("supabase/migrations/202611170001_payments.sql", "utf8"),
   );
+  await db.exec(
+    readFileSync(
+      "supabase/migrations/202611180002_payment_experience.sql",
+      "utf8",
+    ),
+  );
   await db.exec(`insert into auth.users values('${a}','{}'),('${b}','{}');
     insert into households(id,name,currency) values('${house}','Home','USD');
     insert into members(id,household_id,user_id,name) values('${ma}','${house}','${a}','Alex'),('${mb}','${house}','${b}','Jordan');
@@ -43,6 +49,8 @@ it("denies both authenticated and anonymous access to provider contacts and paym
       "payment_dues",
       "payment_orders",
       "payment_reminder_deliveries",
+      "payment_requests",
+      "payment_notifications",
     ])
       await expect(db.query(`select * from ${table}`)).rejects.toThrow(
         /permission denied/,
@@ -115,5 +123,115 @@ it("rate limits verification texts and keeps the claim service-only", async () =
   await expect(
     db.query("select claim_phone_verification($1)", [a]),
   ).rejects.toThrow(/Wait a minute/);
+  await db.exec("reset role");
+});
+
+it("claims one scheduled occurrence and rejects paused, stale, and foreign charges", async () => {
+  const id = "60000000-0000-4000-8000-000000000001";
+  await db.query(
+    `insert into payment_dues(id,user_id,household_id,recipient_id,cents,due_day,automatic,payment_method,consent_at,created_at) values($1,$2,$3,$4,7500,18,true,'pm_bank',now(),'2026-01-01')`,
+    [id, a, house, mb],
+  );
+  const data = {
+    id: "70000000-0000-4000-8000-000000000001",
+    user_id: a,
+    household_id: house,
+    from_id: ma,
+    recipient_id: mb,
+    cents: 7500,
+    fee: 0,
+    funding: "bank",
+    payment_method: "pm_bank",
+    method_label: "Checking 6789",
+    due_id: id,
+    due_date: "2026-11-18",
+  };
+  const call = (value: any) =>
+    db.query<{ id: string }>(
+      "select (reserve_due_payment($1::jsonb,true)).id",
+      [JSON.stringify(value)],
+    );
+  await db.exec("set role authenticated");
+  await expect(call(data)).rejects.toThrow(/permission denied/);
+  await db.exec("reset role");
+  await db.query("update payment_dues set paused=true where id=$1", [id]);
+  await db.exec("set role service_role");
+  await expect(call(data)).rejects.toThrow(/paused/);
+  await db.exec("reset role");
+  await db.query("update payment_dues set paused=false where id=$1", [id]);
+  await db.exec("set role service_role");
+  await expect(call({ ...data, cents: 7600 })).rejects.toThrow(
+    /Schedule changed/,
+  );
+  await expect(call({ ...data, user_id: b })).rejects.toThrow(
+    /Schedule changed/,
+  );
+  expect((await call(data)).rows[0].id).toBe(data.id);
+  expect(
+    (await call({ ...data, id: "70000000-0000-4000-8000-000000000002" }))
+      .rows[0].id,
+  ).toBe(data.id);
+  await db.exec("reset role");
+  expect(
+    (await db.query("select * from payment_orders where due_id=$1", [id])).rows,
+  ).toHaveLength(1);
+});
+it("serializes request payment and cancellation, enforces payer and amount, and keeps private alerts unique", async () => {
+  const request = "80000000-0000-4000-8000-000000000001";
+  await db.query(
+    "insert into payment_requests(id,household_id,requester_id,payer_id,cents,note) values($1,$2,$3,$4,2500,'Groceries')",
+    [request, house, mb, ma],
+  );
+  const data = {
+    id: "90000000-0000-4000-8000-000000000001",
+    user_id: a,
+    household_id: house,
+    from_id: ma,
+    recipient_id: mb,
+    cents: 2500,
+    fee: 0,
+    funding: "bank",
+    payment_method: "pm_bank",
+    method_label: "Checking",
+    request_id: request,
+  };
+  const call = (value: any) =>
+    db.query<{ id: string }>("select (reserve_request_payment($1::jsonb)).id", [
+      JSON.stringify(value),
+    ]);
+  await db.exec("set role service_role");
+  await expect(call({ ...data, cents: 3000 })).rejects.toThrow(/match/);
+  await expect(call({ ...data, user_id: b })).rejects.toThrow(/match/);
+  await expect(
+    db.query("select cancel_payment_request($1,$2)", [request, ma]),
+  ).rejects.toThrow(/unavailable/);
+  expect((await call(data)).rows[0].id).toBe(data.id);
+  expect(
+    (await call({ ...data, id: "90000000-0000-4000-8000-000000000002" }))
+      .rows[0].id,
+  ).toBe(data.id);
+  await expect(
+    db.query("select cancel_payment_request($1,$2)", [request, mb]),
+  ).rejects.toThrow(/already in progress/);
+  await db.query("update payment_orders set status='failed' where id=$1", [
+    data.id,
+  ]);
+  await db.query("select cancel_payment_request($1,$2)", [request, mb]);
+  await expect(call(data)).rejects.toThrow(/unavailable/);
+  await db.query(
+    "insert into payment_notifications(user_id,event_key,message) values($1,'failure-1','Needs attention') on conflict do nothing",
+    [a],
+  );
+  await db.query(
+    "insert into payment_notifications(user_id,event_key,message) values($1,'failure-1','Needs attention') on conflict do nothing",
+    [a],
+  );
+  expect(
+    (
+      await db.query("select * from payment_notifications where user_id=$1", [
+        a,
+      ])
+    ).rows,
+  ).toHaveLength(1);
   await db.exec("reset role");
 });

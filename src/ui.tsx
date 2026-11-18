@@ -1,4 +1,5 @@
-import React from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Pressable,
@@ -108,13 +109,77 @@ export function Icon({
   color?: string;
 }) {
   const I = icons[name];
-  return <I size={size} color={color} strokeWidth={1.7} />;
+  return (
+    <I
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      size={size}
+      color={color}
+      strokeWidth={1.7}
+    />
+  );
+}
+const TextPreferences = createContext({
+  scale: 1,
+  setLarge: (_large: boolean) => {},
+});
+export function AccessibilityProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    AsyncStorage.getItem("splitcart-large-text")
+      .then((v) => {
+        if (v === "true") setScale(1.2);
+      })
+      .catch(() => {});
+  }, []);
+  const setLarge = (large: boolean) => {
+    setScale(large ? 1.2 : 1);
+    void AsyncStorage.setItem("splitcart-large-text", String(large)).catch(
+      () => {},
+    );
+  };
+  return (
+    <TextPreferences.Provider value={{ scale, setLarge }}>
+      {children}
+    </TextPreferences.Provider>
+  );
+}
+export function AccessibilitySettings() {
+  const { scale, setLarge } = useContext(TextPreferences);
+  return (
+    <View style={[s.card, { gap: 16 }]}>
+      <Title style={{ fontSize: 25 }}>Accessibility</Title>
+      <Txt>
+        Text follows your device’s text-size setting. You can also increase text
+        size within SplitCart.
+      </Txt>
+      <Button
+        secondary
+        label={scale > 1 ? "Use standard text size" : "Use larger text"}
+        onPress={() => setLarge(scale === 1)}
+      />
+    </View>
+  );
 }
 export function Txt({ children, style, ...rest }: any) {
+  const { scale } = useContext(TextPreferences);
+  const flat = StyleSheet.flatten(style) || {};
   return (
     <Text
       {...rest}
-      style={[{ fontFamily: "DM", fontSize: 14, color: C.ink }, style]}
+      style={[
+        { fontFamily: "DM", fontSize: 14, color: C.ink },
+        style,
+        {
+          fontSize: (flat.fontSize || 14) * scale,
+          ...(flat.lineHeight ? { lineHeight: flat.lineHeight * scale } : {}),
+        },
+      ]}
     >
       {children}
     </Text>
@@ -123,6 +188,7 @@ export function Txt({ children, style, ...rest }: any) {
 export function Title({ children, style }: any) {
   return (
     <Txt
+      accessibilityRole="header"
       style={[
         { fontFamily: "Fraunces", fontSize: 34, letterSpacing: -1 },
         style,
@@ -134,6 +200,7 @@ export function Title({ children, style }: any) {
 }
 export function Button({
   label,
+  accessibilityLabel,
   onPress,
   icon,
   secondary = false,
@@ -144,6 +211,7 @@ export function Button({
   style,
 }: {
   label: string;
+  accessibilityLabel?: string;
   onPress: () => void;
   icon?: IconName;
   secondary?: boolean;
@@ -156,12 +224,14 @@ export function Button({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel || label}
+      accessibilityState={{ disabled: disabled || loading, busy: loading }}
       onPress={onPress}
       disabled={disabled || loading}
       style={({ pressed, hovered }: any) => [
         {
-          minHeight: small ? 38 : 48,
+          minHeight: small ? 44 : 48,
+          flexShrink: 1,
           paddingHorizontal: small ? 14 : 20,
           borderRadius: 10,
           flexDirection: "row",
@@ -191,7 +261,9 @@ export function Button({
       <Txt
         style={{
           fontFamily: "DMBold",
-          fontSize: small ? 12 : 14,
+          fontSize: 14,
+          flexShrink: 1,
+          textAlign: "center",
           color: danger ? C.red : secondary ? C.ink : C.white,
         }}
       >
@@ -210,12 +282,13 @@ export function Field({
   multiline = false,
   ...inputProps
 }: any) {
+  const { scale } = useContext(TextPreferences);
   return (
     <View style={{ gap: 8, flex: 1, minWidth: 100 }}>
       <Txt style={{ fontFamily: "DMBold", fontSize: 12 }}>{label}</Txt>
       <TextInput
         accessibilityLabel={label}
-        placeholderTextColor="#969D96"
+        placeholderTextColor={C.muted}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -231,7 +304,7 @@ export function Field({
           paddingHorizontal: 14,
           paddingVertical: 13,
           fontFamily: "DM",
-          fontSize: 14,
+          fontSize: 16 * scale,
           color: C.ink,
           backgroundColor: C.white,
           minHeight: 48,
@@ -259,6 +332,9 @@ export function Chip({
       aria-pressed={active}
       onPress={onPress}
       style={{
+        minHeight: 44,
+        maxWidth: "100%",
+        flexShrink: 1,
         flexDirection: "row",
         gap: 6,
         alignItems: "center",
@@ -273,7 +349,8 @@ export function Chip({
       {icon && <Icon name={icon} size={14} color={C.green} />}
       <Txt
         style={{
-          fontSize: 12,
+          fontSize: 14,
+          flexShrink: 1,
           color: active ? C.green : C.muted,
           fontFamily: active ? "DMBold" : "DM",
         }}

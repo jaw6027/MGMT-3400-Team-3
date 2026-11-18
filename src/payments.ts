@@ -18,8 +18,14 @@ export type Due = {
   automatic: boolean;
   method: string;
   consent: boolean;
+  paused?: boolean;
+  created_at?: string;
 };
 export type Payment = {
+  methodLabel?: string;
+  dueId?: string;
+  dueDate?: string;
+  requestId?: string;
   id: string;
   cents: number;
   fee: number;
@@ -34,7 +40,21 @@ export type Reminder = {
   days: number;
   consent: boolean;
 };
+export type PaymentRequest = {
+  id: string;
+  requester: string;
+  payer: string;
+  cents: number;
+  note: string;
+  expenseId?: string;
+  canceled: boolean;
+  created_at: string;
+  status?: string;
+};
+export type PaymentNotice = { id: string; message: string; created_at: string };
 export type PaymentState = {
+  requests?: PaymentRequest[];
+  notifications?: PaymentNotice[];
   phoneVerified: boolean;
   methods: PaymentMethod[];
   payoutReady: boolean;

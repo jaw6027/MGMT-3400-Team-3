@@ -30,7 +30,8 @@ let orders: any[] = [],
   authenticated = true,
   sameHouse = true,
   automaticDues: any[] = [],
-  reminderRows: any[] = [];
+  reminderRows: any[] = [],
+  notices: any[] = [];
 let intentStatus = "succeeded",
   sends = 0;
 let smsSends = 0,
@@ -64,6 +65,7 @@ function reset() {
   sameHouse = true;
   automaticDues = [];
   reminderRows = [];
+  notices = [];
   intentStatus = "succeeded";
   sends = 0;
   smsSends = 0;
@@ -94,6 +96,8 @@ globalThis.fetch = async (
   const one = req.headers.get("accept")?.includes("object+json");
   const rows = (items: any[]) => json(one ? items[0] || null : items);
   if (url.host === "api.stripe.com") {
+    if (url.pathname === "/v1/payment_methods")
+      return json({ data: [], has_more: false });
     if (url.pathname.startsWith("/v1/payment_methods/"))
       return json({
         id: "pm_fixture",
@@ -175,6 +179,32 @@ globalThis.fetch = async (
         : [],
     );
   }
+  if (table === "payment_notifications") {
+    if (
+      req.method === "POST" &&
+      !notices.some(
+        (n) => n.event_key === body.event_key && n.user_id === body.user_id,
+      )
+    )
+      notices.push(body);
+    return req.method === "GET" ? rows(notices) : json(null);
+  }
+  if (table === "payment_requests") return rows([]);
+  if (table === "reserve_due_payment") {
+    const value = body.order_data;
+    let row = orders.find(
+      (o) => o.due_id === value.due_id && o.due_date === value.due_date,
+    );
+    if (!row) {
+      row = {
+        ...value,
+        status: "created",
+        created_at: new Date().toISOString(),
+      };
+      orders.push(row);
+    }
+    return json(row);
+  }
   if (table === "payment_orders") {
     if (req.method === "POST") {
       const row = {
@@ -216,7 +246,17 @@ globalThis.fetch = async (
       automaticDues.push(body);
       return json(null);
     }
-    return rows(automaticDues);
+    let matching = automaticDues;
+    for (const field of ["id", "user_id", "household_id"])
+      if (url.searchParams.get(field)?.startsWith("eq."))
+        matching = matching.filter(
+          (d) => d[field] === url.searchParams.get(field)!.slice(3),
+        );
+    if (req.method === "PATCH") {
+      for (const d of matching) Object.assign(d, body);
+      return rows(matching);
+    }
+    return rows(matching);
   }
   if (table === "payment_reminder_deliveries") {
     if (req.method === "POST") {
@@ -225,7 +265,8 @@ globalThis.fetch = async (
           (r) =>
             r.due_id === body.due_id &&
             r.due_date === body.due_date &&
-            r.channel === body.channel,
+            r.channel === body.channel &&
+            r.kind === body.kind,
         )
       )
         return json({ code: "23505" }, 409);
@@ -528,5 +569,116 @@ Deno.test(
     const run = await request({}, "/run", "job-fixture");
     assert(run.status === 200 && smsSends === 1);
     assert(!a.sms_reminders, "An opted-out number must be disabled locally");
+  },
+);
+
+Deno.test(
+  "cleared, processing, and paused dues do not receive pay reminders",
+  async () => {
+    for (const state of ["succeeded", "processing", "created", "paused"]) {
+      reset();
+      automaticDues = [
+        {
+          id: "60000000-0000-4000-8000-000000000001",
+          user_id: userId,
+          household_id: "home",
+          recipient_id: "roommate",
+          cents: 1000,
+          due_day: 17,
+          automatic: false,
+          payment_method: "",
+          paused: state === "paused",
+        },
+      ];
+      if (state !== "paused")
+        orders = [
+          {
+            id: orderId,
+            user_id: userId,
+            due_id: automaticDues[0].id,
+            due_date: "2026-11-17",
+            status: state,
+          },
+        ];
+      const response = await request({}, "/run", "job-fixture");
+      assert(response.status === 200);
+      assert(sends === 0, `${state} should suppress payment reminders`);
+    }
+  },
+);
+Deno.test(
+  "failed autopay produces one durable warning and separate opted-in failure alerts",
+  async () => {
+    reset();
+    funding = "bank";
+    intentStatus = "requires_payment_method";
+    Deno.env.set("RESEND_API_KEY", "re_fixture");
+    Deno.env.set("REMINDER_FROM_EMAIL", "billing@example.test");
+    automaticDues = [
+      {
+        id: "60000000-0000-4000-8000-000000000001",
+        user_id: userId,
+        household_id: "home",
+        recipient_id: "roommate",
+        cents: 1000,
+        due_day: 17,
+        automatic: true,
+        consent_at: "2026-01-01",
+        payment_method: "pm_fixture",
+      },
+    ];
+    await request({}, "/run", "job-fixture");
+    await request({}, "/run", "job-fixture");
+    assert(orders.length === 1 && orders[0].status === "failed");
+    assert(notices.length === 1, "One durable warning per occurrence");
+    assert(reminderRows.filter((r) => r.kind === "failure").length === 1);
+    assert(
+      sends === 2,
+      "One normal due reminder and one failure alert, each claimed separately",
+    );
+  },
+);
+Deno.test(
+  "manual occurrence payment stays on-session and foreign dues cannot be charged",
+  async () => {
+    reset();
+    funding = "bank";
+    const dueId = "60000000-0000-4000-8000-000000000001";
+    automaticDues = [
+      {
+        id: dueId,
+        user_id: userId,
+        household_id: "home",
+        recipient_id: "roommate",
+        cents: 1000,
+        due_day: 17,
+        automatic: false,
+        payment_method: "",
+        created_at: "2026-01-01",
+      },
+    ];
+    const response = await request({
+      ...payment(),
+      total: 1000,
+      dueId,
+      dueDate: "2026-11-17",
+    });
+    assert(response.status === 200, await response.clone().text());
+    const confirm = requests.find((r) => r.url.pathname.endsWith("/confirm"));
+    assert(
+      confirm?.body.off_session === "false",
+      "User-initiated payment must allow bank authentication",
+    );
+    automaticDues[0].user_id = "other-user";
+    assert(
+      (
+        await request({
+          ...payment(),
+          total: 1000,
+          dueId,
+          dueDate: "2026-11-17",
+        })
+      ).status === 400,
+    );
   },
 );

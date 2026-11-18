@@ -31,6 +31,12 @@
           "cameraPermission": "Take a receipt photo for your shared purchase.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Unlock SplitCart with Face ID to protect your household and payment information."
+        }
       ]
     ],
     "icon": "./assets/icon.png",

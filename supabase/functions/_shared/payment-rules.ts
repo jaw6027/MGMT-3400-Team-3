@@ -41,3 +41,71 @@ export function validateReminder(
   if (sms && !/^\+[1-9]\d{7,14}$/.test(phone))
     throw new Error("Use an international phone number, such as +14155550123.");
 }
+
+export function paymentStatus(status: string) {
+  const statuses: Record<
+    string,
+    { label: string; help: string; attention: boolean }
+  > = {
+    created: {
+      label: "Pending",
+      help: "Your payment is being prepared. Refresh its status before trying again.",
+      attention: false,
+    },
+    processing: {
+      label: "Processing",
+      help: "Your bank is processing this payment. No action needed; balances update after confirmation.",
+      attention: false,
+    },
+    requires_action: {
+      label: "Action needed",
+      help: "Complete your bank’s authentication, then refresh payment status.",
+      attention: true,
+    },
+    succeeded: {
+      label: "Completed",
+      help: "Payment confirmed. The recipient’s payment amount is recorded in your balance.",
+      attention: false,
+    },
+    failed: {
+      label: "Failed",
+      help: "Payment did not clear. Check your bank details and available funds. Review with support before paying this due again.",
+      attention: true,
+    },
+    canceled: {
+      label: "Canceled",
+      help: "This payment was canceled. Review your balance before making a new payment.",
+      attention: false,
+    },
+    refunded: {
+      label: "Refunded",
+      help: "The repayment credit has been removed. Contact support to reconcile your balance and refund.",
+      attention: true,
+    },
+    disputed: {
+      label: "Disputed",
+      help: "The repayment credit has been removed. Contact support before sending another payment.",
+      attention: true,
+    },
+  };
+  return (
+    statuses[status] || {
+      label: "Status unavailable",
+      help: "Refresh payment status before making another payment.",
+      attention: true,
+    }
+  );
+}
+
+export function nextMonthlyDate(day: number, from: string) {
+  const date = dueDate(from.slice(0, 7), day);
+  if (date >= from) return date;
+  const next = new Date(`${from.slice(0, 7)}-01T00:00:00Z`);
+  next.setUTCMonth(next.getUTCMonth() + 1);
+  return dueDate(next.toISOString().slice(0, 7), day);
+}
+
+export function shouldRemind(status: string | undefined, paused = false) {
+  // Processing and disputed payments must not invite a second debit.
+  return !paused && (!status || status === "canceled");
+}

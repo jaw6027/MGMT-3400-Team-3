@@ -14,8 +14,14 @@ import {
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 export const liveConfigured = Boolean(url && key);
+export const recoveryLinkAtStartup =
+  Platform.OS === "web" &&
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
 export const demoDefault =
-  !browserPreviewEnabled && process.env.EXPO_PUBLIC_DEMO_MODE !== "false";
+  !browserPreviewEnabled &&
+  !recoveryLinkAtStartup &&
+  process.env.EXPO_PUBLIC_DEMO_MODE !== "false";
 export const supabase =
   liveConfigured || browserPreviewEnabled
     ? createClient(

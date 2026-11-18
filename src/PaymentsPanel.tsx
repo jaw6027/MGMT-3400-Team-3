@@ -6,10 +6,25 @@ import { Button, C, Chip, Field, Icon, s, Title, Txt } from "./ui";
 import { money, parseMoney, today } from "./core";
 import { uid } from "./backend";
 import { paymentAction } from "./paymentApi";
+import { PaymentDashboard } from "./PaymentDashboard";
+import { PaymentRequests } from "./PaymentRequests";
+import {
+  loadPaymentExperience,
+  demoRequests,
+  saveDemoRequest,
+} from "./paymentStorage";
+import {
+  paymentStatus,
+  upcomingPayment,
+  nextChargeDate,
+  receiptText,
+} from "./paymentExperience";
+import { downloadReceipt } from "./paymentReceipt";
 import {
   Due,
   emptyPayments,
   PaymentState,
+  PaymentRequest,
   quote,
   dueDate,
   validateReminder,
@@ -44,6 +59,15 @@ export default function PaymentsPanel() {
   const [open, setOpen] = useState(false),
     [ready, setReady] = useState(false);
   const [section, setSection] = useState("Accounts");
+  const [editingDue, setEditingDue] = useState<Due | null>(null);
+  const [dueContext, setDueContext] = useState<{
+    id: string;
+    date: string;
+  } | null>(null);
+  const [requestContext, setRequestContext] = useState<PaymentRequest | null>(
+    null,
+  );
+  const [search, setSearch] = useState("");
   const [state, setState] = useState<PaymentState>(emptyPayments);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -59,6 +83,9 @@ export default function PaymentsPanel() {
     cents: number;
     fee: number;
     total: number;
+    dueId?: string;
+    dueDate?: string;
+    requestId?: string;
   } | null>(null);
   const [day, setDay] = useState("1"),
     [automatic, setAutomatic] = useState(false),
@@ -103,14 +130,7 @@ export default function PaymentsPanel() {
     setState(next);
   };
   const load = async () => {
-    if (st.demo) {
-      const raw = await AsyncStorage.getItem(key);
-      apply(
-        raw
-          ? JSON.parse(raw)
-          : { ...emptyPayments, available: true, appDues: 500 },
-      );
-    } else apply(await paymentAction("status"));
+    apply(await loadPaymentExperience(st.user!.id, st.household!.id, st.demo));
     setReady(true);
   };
   const run = async (fn: () => Promise<void>) => {
@@ -131,9 +151,22 @@ export default function PaymentsPanel() {
   useEffect(() => {
     if (open) void run(load);
   }, [open]);
+  const notice = (next: PaymentState, text: string) => ({
+    ...next,
+    notifications: [
+      { id: uid(), message: text, created_at: new Date().toISOString() },
+      ...(next.notifications || []),
+    ].slice(0, 30),
+  });
   const setup = async (kind: "bank" | "card" | "payout") => {
     if (st.demo) {
-      if (kind === "payout") await persist({ ...state, payoutReady: true });
+      if (kind === "payout")
+        await persist(
+          notice(
+            { ...state, payoutReady: true },
+            "Sample receiving-bank setup changed.",
+          ),
+        );
       else {
         const m =
           kind === "bank"
@@ -147,10 +180,15 @@ export default function PaymentsPanel() {
                 funding: "credit" as const,
                 label: "Demo Visa credit •••• 4242",
               };
-        await persist({
-          ...state,
-          methods: [...state.methods.filter((x) => x.id !== m.id), m],
-        });
+        await persist(
+          notice(
+            {
+              ...state,
+              methods: [...state.methods.filter((x) => x.id !== m.id), m],
+            },
+            "A sample payment method was added or updated.",
+          ),
+        );
         setSelected(m.id);
       }
       setMessage(
@@ -177,12 +215,42 @@ export default function PaymentsPanel() {
       id: uid(),
       method: selected,
       recipient: to,
+      dueId: dueContext?.id,
+      dueDate: dueContext?.date,
+      requestId: requestContext?.id,
       ...quote(cents, method.funding),
     });
   };
   const pay = async () => {
     if (!review) return;
     if (st.demo) {
+      const fresh = await loadPaymentExperience(
+        st.user!.id,
+        st.household!.id,
+        true,
+      );
+      if (
+        review.dueId &&
+        fresh.payments.some(
+          (p) => p.dueId === review.dueId && p.dueDate === review.dueDate,
+        )
+      )
+        throw new Error(
+          "This due already has a payment. Check Activity before paying again.",
+        );
+      if (review.requestId) {
+        const request = (await demoRequests(st.household!.id)).find(
+          (r) => r.id === review.requestId,
+        );
+        if (
+          !request ||
+          request.canceled ||
+          (request.status && request.status !== "open")
+        )
+          throw new Error(
+            "This request is no longer available to pay. Refresh its status.",
+          );
+      }
       // Same request id is used for both records; retrying never doubles the ledger.
       if (review.recipient !== "app")
         await st.repay({
@@ -203,10 +271,23 @@ export default function PaymentsPanel() {
             fee: review.fee,
             status: "succeeded",
             created_at: new Date().toISOString(),
+            methodLabel: method?.label,
+            dueId: review.dueId,
+            dueDate: review.dueDate,
+            requestId: review.requestId,
           },
           ...state.payments.filter((p) => p.id !== review.id),
         ],
       });
+      if (review.requestId) {
+        const requests = await demoRequests(st.household!.id),
+          request = requests.find((r) => r.id === review.requestId)!;
+        await saveDemoRequest(st.household!.id, {
+          ...request,
+          status: "succeeded",
+        });
+        await load();
+      }
       setMessage("Demo payment simulated. No money moved.");
     } else {
       const p = await paymentAction("pay", { ...review, consent: true });
@@ -228,6 +309,8 @@ export default function PaymentsPanel() {
       );
     }
     setReview(null);
+    setDueContext(null);
+    setRequestContext(null);
   };
   const saveDue = async () => {
     if (!method && automatic)
@@ -240,7 +323,9 @@ export default function PaymentsPanel() {
         "Choose a bank account and authorize automatic payments.",
       );
     const due: Due = {
-      id: uid(),
+      id: editingDue?.id || uid(),
+      created_at: editingDue?.created_at || new Date().toISOString(),
+      paused: false,
       recipient: to,
       cents,
       day: Number(day),
@@ -248,12 +333,24 @@ export default function PaymentsPanel() {
       method: automatic ? selected : "",
       consent: authorize,
     };
-    if (st.demo) await persist({ ...state, dues: [due, ...state.dues] });
+    if (st.demo)
+      await persist(
+        notice(
+          {
+            ...state,
+            dues: [due, ...state.dues.filter((d) => d.id !== due.id)],
+          },
+          editingDue
+            ? "A monthly payment schedule was updated."
+            : "A monthly payment schedule was created.",
+        ),
+      );
     else {
-      await paymentAction("save_due", { due });
+      await paymentAction(editingDue ? "update_due" : "save_due", { due });
       await load();
     }
     setAuthorize(false);
+    setEditingDue(null);
     setMessage(
       st.demo
         ? "Demo monthly due saved. Automatic charges and reminder deliveries are simulated only."
@@ -267,7 +364,13 @@ export default function PaymentsPanel() {
         "Verify this phone number before enabling text reminders.",
       );
     const reminder = { email, sms, phone, days, consent };
-    if (st.demo) await persist({ ...state, reminder });
+    if (st.demo)
+      await persist(
+        notice(
+          { ...state, reminder },
+          "Payment reminder preferences were changed.",
+        ),
+      );
     else {
       await paymentAction("reminders", { reminder });
       await load();
@@ -393,22 +496,95 @@ export default function PaymentsPanel() {
                 accessibilityLabel="Payment sections"
                 style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
               >
-                {["Accounts", "Pay", "Autopay", "Reminders", "Activity"].map(
-                  (name) => (
-                    <Chip
-                      key={name}
-                      label={name}
-                      active={section === name}
-                      onPress={() => {
-                        setSection(name);
-                        setReview(null);
-                        setError("");
-                        setMessage("");
-                      }}
-                    />
-                  ),
-                )}
+                {[
+                  "Upcoming",
+                  "Accounts",
+                  "Pay",
+                  "Autopay",
+                  "Reminders",
+                  "Requests",
+                  "Activity",
+                ].map((name) => (
+                  <Chip
+                    key={name}
+                    label={name}
+                    active={section === name}
+                    onPress={() => {
+                      setSection(name);
+                      setReview(null);
+                      setDueContext(null);
+                      setRequestContext(null);
+                      setError("");
+                      setMessage("");
+                    }}
+                  />
+                ))}
               </View>
+              {section === "Upcoming" && (
+                <PaymentDashboard
+                  state={state}
+                  name={recipientName}
+                  onPay={(d, date) => {
+                    setTo(d.recipient);
+                    setAmount((d.cents / 100).toFixed(2));
+                    setDueContext({ id: d.id, date });
+                    setRequestContext(null);
+                    setReview(null);
+                    setSection("Pay");
+                  }}
+                />
+              )}
+              {section === "Requests" && (
+                <PaymentRequests
+                  requests={state.requests || []}
+                  busy={busy}
+                  onCreate={(r) =>
+                    void run(async () => {
+                      quote(r.cents, "bank");
+                      if (st.demo) {
+                        await saveDemoRequest(st.household!.id, r);
+                        await load();
+                      } else {
+                        await paymentAction("create_request", { request: r });
+                        await load();
+                      }
+                      setMessage(
+                        st.demo
+                          ? "Demo payment request saved in this browser."
+                          : "Payment request sent.",
+                      );
+                    })
+                  }
+                  onPay={(r) => {
+                    setRequestContext(r);
+                    setDueContext(null);
+                    setTo(r.requester);
+                    setAmount((r.cents / 100).toFixed(2));
+                    setReview(null);
+                    setSection("Pay");
+                  }}
+                  onCancel={(r) =>
+                    void run(async () => {
+                      if (st.demo) {
+                        const latest = (
+                          await demoRequests(st.household!.id)
+                        ).find((x) => x.id === r.id);
+                        if (latest?.status !== "open")
+                          throw new Error(
+                            "This request already has a payment.",
+                          );
+                        await saveDemoRequest(st.household!.id, {
+                          ...r,
+                          canceled: true,
+                        });
+                      } else
+                        await paymentAction("cancel_request", { id: r.id });
+                      await load();
+                      setMessage("Payment request canceled.");
+                    })
+                  }
+                />
+              )}
               {section === "Accounts" && (
                 <>
                   <Title style={{ fontSize: 22 }}>Your payment methods</Title>
@@ -492,12 +668,17 @@ export default function PaymentsPanel() {
                                 "Cancel automatic dues using this method before removing it.",
                               );
                             if (st.demo) {
-                              await persist({
-                                ...state,
-                                methods: state.methods.filter(
-                                  (x) => x.id !== m.id,
+                              await persist(
+                                notice(
+                                  {
+                                    ...state,
+                                    methods: state.methods.filter(
+                                      (x) => x.id !== m.id,
+                                    ),
+                                  },
+                                  "A sample payment method was removed.",
                                 ),
-                              });
+                              );
                               if (selected === m.id) setSelected("");
                             } else {
                               await paymentAction("remove_method", {
@@ -577,33 +758,70 @@ export default function PaymentsPanel() {
                       ))}
                     </View>
                   )}
-                  <Txt style={s.label}>PAY TO</Txt>
-                  <View
-                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
-                  >
-                    {[
-                      ...roommates.map((m) => ({ id: m.id, name: m.name })),
-                      ...(state.appDues
-                        ? [{ id: "app", name: "SplitCart app dues" }]
-                        : []),
-                    ].map((m) => (
-                      <Chip
-                        key={m.id}
-                        label={m.name}
-                        active={to === m.id}
+                  {(dueContext || requestContext) && (
+                    <View
+                      style={{
+                        gap: 8,
+                        backgroundColor: C.sage,
+                        padding: 14,
+                        borderRadius: 10,
+                      }}
+                    >
+                      <Txt style={{ fontFamily: "DMBold" }}>
+                        {dueContext
+                          ? `Scheduled due · ${dueContext.date} (UTC)`
+                          : "Paying a roommate’s request"}
+                      </Txt>
+                      <Txt>
+                        To {recipientName(to)} ·{" "}
+                        {fmt(to === "app" ? state.appDues : parseMoney(amount))}
+                      </Txt>
+                      <Button
+                        secondary
+                        small
+                        label="Leave linked payment"
                         onPress={() => {
-                          setTo(m.id);
+                          setDueContext(null);
+                          setRequestContext(null);
                           setReview(null);
-                          setAuthorize(false);
                         }}
                       />
-                    ))}
-                  </View>
+                    </View>
+                  )}
+                  <Txt style={s.label}>PAY TO</Txt>
+                  {dueContext ||
+                  requestContext ||
+                  (editingDue && section === "Autopay") ? (
+                    <Txt>{recipientName(to)}</Txt>
+                  ) : (
+                    <View
+                      style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                    >
+                      {[
+                        ...roommates.map((m) => ({ id: m.id, name: m.name })),
+                        ...(state.appDues
+                          ? [{ id: "app", name: "SplitCart app dues" }]
+                          : []),
+                      ].map((m) => (
+                        <Chip
+                          key={m.id}
+                          label={m.name}
+                          active={to === m.id}
+                          onPress={() => {
+                            setTo(m.id);
+                            setReview(null);
+                            setAuthorize(false);
+                          }}
+                        />
+                      ))}
+                    </View>
+                  )}
                   {to === "app" ? (
                     <Txt>App dues: {fmt(state.appDues)}</Txt>
                   ) : (
                     <Field
                       label="Payment amount (USD)"
+                      editable={!dueContext && !requestContext}
                       value={amount}
                       onChangeText={(v: string) => {
                         setAmount(v);
@@ -753,7 +971,9 @@ export default function PaymentsPanel() {
                   )}
                   <Button
                     secondary
-                    label="Save monthly due"
+                    label={
+                      editingDue ? "Save schedule changes" : "Save monthly due"
+                    }
                     disabled={
                       busy ||
                       (automatic && (!method || !state.available)) ||
@@ -761,6 +981,16 @@ export default function PaymentsPanel() {
                     }
                     onPress={() => void run(saveDue)}
                   />
+                  {editingDue && (
+                    <Button
+                      secondary
+                      label="Cancel schedule editing"
+                      onPress={() => {
+                        setEditingDue(null);
+                        setAuthorize(false);
+                      }}
+                    />
+                  )}
                   {state.dues.length === 0 && (
                     <Txt style={s.muted}>No monthly dues scheduled.</Txt>
                   )}
@@ -783,6 +1013,74 @@ export default function PaymentsPanel() {
                         {d.automatic ? "Bank autopay" : "Reminder only"}
                         {st.demo ? " · Demo" : ""}
                       </Txt>
+                      <Txt>
+                        {d.paused
+                          ? "Paused · No future automatic charge or due reminders"
+                          : d.automatic
+                            ? `Next automatic charge: ${nextChargeDate(d, state.payments, today())} (UTC) · ${fmt(d.cents)}`
+                            : `Next due: ${upcomingPayment(d, state.payments, today()).date} (UTC) · ${fmt(d.cents)}`}
+                      </Txt>
+                      <Button
+                        secondary
+                        small
+                        label={`Edit monthly due to ${recipientName(d.recipient)}`}
+                        disabled={busy}
+                        onPress={() => {
+                          setEditingDue(d);
+                          setTo(d.recipient);
+                          setAmount((d.cents / 100).toFixed(2));
+                          setDay(String(d.day));
+                          setSelected(
+                            d.method ||
+                              state.methods.find((m) => m.funding === "bank")
+                                ?.id ||
+                              "",
+                          );
+                          setAutomatic(d.automatic);
+                          setAuthorize(false);
+                          setDueContext(null);
+                          setRequestContext(null);
+                          setMessage(
+                            "Edit the schedule above, then save. Bank autopay requires fresh authorization. Payments already processing keep their original amount.",
+                          );
+                        }}
+                      />
+                      {!d.paused && (
+                        <Button
+                          secondary
+                          small
+                          label={`Pause monthly due to ${recipientName(d.recipient)}`}
+                          disabled={busy}
+                          onPress={() =>
+                            void run(async () => {
+                              if (st.demo)
+                                await persist(
+                                  notice(
+                                    {
+                                      ...state,
+                                      dues: state.dues.map((x) =>
+                                        x.id === d.id
+                                          ? { ...x, paused: true }
+                                          : x,
+                                      ),
+                                    },
+                                    "A monthly payment schedule was paused.",
+                                  ),
+                                );
+                              else {
+                                await paymentAction("pause_due", {
+                                  id: d.id,
+                                  paused: true,
+                                });
+                                await load();
+                              }
+                              setMessage(
+                                "Schedule paused. Payments already processing may still complete. Edit and authorize the schedule to resume.",
+                              );
+                            })
+                          }
+                        />
+                      )}
                       <Button
                         secondary
                         small
@@ -924,60 +1222,111 @@ export default function PaymentsPanel() {
                     Only confirmed payments update household balances. Manual
                     repayment records remain separate.
                   </Txt>
+                  <Field
+                    label="Search payment history"
+                    value={search}
+                    onChangeText={setSearch}
+                    placeholder="Search transactions"
+                  />
+                  {state.payments.length > 0 &&
+                    state.payments.filter((p) =>
+                      `${recipientName(p.recipient)} ${p.methodLabel || ""} ${paymentStatus(p.status).label} ${p.id} ${(p.cents / 100).toFixed(2)}`
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                    ).length === 0 && <Txt>No payments match your search.</Txt>}
                   {state.payments.length === 0 && (
                     <Txt style={s.muted}>No bank or card payments yet.</Txt>
                   )}
-                  {state.payments.map((p) => (
-                    <View key={p.id} style={{ gap: 5, paddingVertical: 10 }}>
-                      <Txt style={{ fontFamily: "DMBold" }}>
-                        {fmt(p.cents)} to {recipientName(p.recipient)} ·{" "}
-                        {p.status}
-                        {st.demo ? " (demo)" : ""}
-                      </Txt>
-                      <Txt style={s.muted}>
-                        Surcharge {fmt(p.fee)} · Total {fmt(p.cents + p.fee)} ·{" "}
-                        {p.created_at.slice(0, 10)}
-                      </Txt>
-                      {p.status === "requires_action" && !st.demo && (
+                  {state.payments
+                    .filter((p) =>
+                      `${recipientName(p.recipient)} ${p.methodLabel || ""} ${paymentStatus(p.status).label} ${p.id} ${(p.cents / 100).toFixed(2)}`
+                        .toLowerCase()
+                        .includes(search.toLowerCase()),
+                    )
+                    .map((p) => (
+                      <View key={p.id} style={{ gap: 5, paddingVertical: 10 }}>
+                        <Txt style={{ fontFamily: "DMBold" }}>
+                          {fmt(p.cents)} to {recipientName(p.recipient)} ·{" "}
+                          {paymentStatus(p.status).label}
+                          {st.demo ? " (demo)" : ""}
+                        </Txt>
+                        <Txt style={s.muted}>
+                          Surcharge {fmt(p.fee)} · Total {fmt(p.cents + p.fee)}{" "}
+                          · {p.created_at.slice(0, 10)}
+                        </Txt>
+                        <Txt>
+                          {p.methodLabel ||
+                            "Payment method unavailable for this older payment"}
+                        </Txt>
+                        <Txt
+                          style={{
+                            color: paymentStatus(p.status).attention
+                              ? C.red
+                              : C.muted,
+                          }}
+                        >
+                          {paymentStatus(p.status).help}
+                        </Txt>
                         <Button
                           secondary
                           small
-                          label="Complete payment authentication"
+                          label="Download receipt"
+                          accessibilityLabel={`Download receipt ${p.id}`}
                           disabled={busy}
                           onPress={() =>
-                            void run(async () => {
-                              const response = await paymentAction(
-                                "authenticate",
-                                {
-                                  id: p.id,
-                                },
-                              );
-                              if (
-                                response.url &&
-                                new URL(response.url).protocol === "https:"
-                              )
-                                await Linking.openURL(response.url);
-                              else
-                                setMessage(
-                                  "Refresh payment status. If authentication is still required, use a different method after canceling this payment with support.",
-                                );
-                            })
+                            void run(() =>
+                              downloadReceipt(
+                                p.id,
+                                receiptText(
+                                  p,
+                                  recipientName(p.recipient),
+                                  "",
+                                  st.demo,
+                                ),
+                              ),
+                            )
                           }
                         />
-                      )}
-                      {[
-                        "failed",
-                        "requires_action",
-                        "refunded",
-                        "disputed",
-                      ].includes(p.status) && (
-                        <Txt style={{ color: C.red }}>
-                          This payment needs attention. Check with support
-                          before trying another payment.
-                        </Txt>
-                      )}
-                    </View>
-                  ))}
+                        {p.status === "requires_action" && !st.demo && (
+                          <Button
+                            secondary
+                            small
+                            label="Complete payment authentication"
+                            disabled={busy}
+                            onPress={() =>
+                              void run(async () => {
+                                const response = await paymentAction(
+                                  "authenticate",
+                                  {
+                                    id: p.id,
+                                  },
+                                );
+                                if (
+                                  response.url &&
+                                  new URL(response.url).protocol === "https:"
+                                )
+                                  await Linking.openURL(response.url);
+                                else
+                                  setMessage(
+                                    "Refresh payment status. If authentication is still required, use a different method after canceling this payment with support.",
+                                  );
+                              })
+                            }
+                          />
+                        )}
+                        {[
+                          "failed",
+                          "requires_action",
+                          "refunded",
+                          "disputed",
+                        ].includes(p.status) && (
+                          <Txt style={{ color: C.red }}>
+                            This payment needs attention. Check with support
+                            before trying another payment.
+                          </Txt>
+                        )}
+                      </View>
+                    ))}
                 </>
               )}
             </>

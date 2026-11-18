@@ -64,7 +64,14 @@ import {
   Txt,
 } from "./src/ui";
 import Illustration from "./src/Illustration";
+import { AccessibilityProvider, AccessibilitySettings } from "./src/ui";
 import PaymentsPanel from "./src/PaymentsPanel";
+import {
+  SecurityProvider,
+  SecuritySettings,
+  PasswordRecovery,
+} from "./src/Security";
+import { UpcomingPayments } from "./src/PaymentDashboard";
 import {
   browserPreviewEnabled,
   previewSampleEmail,
@@ -152,9 +159,13 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
-      <Provider>
-        <Main />
-      </Provider>
+      <AccessibilityProvider>
+        <Provider>
+          <SecurityProvider>
+            <Main />
+          </SecurityProvider>
+        </Provider>
+      </AccessibilityProvider>
     </SafeAreaProvider>
   );
 }
@@ -202,6 +213,8 @@ function Main() {
         <Txt>Getting your household ready…</Txt>
       </View>
     );
+  if (store.recovering && store.user)
+    return <PasswordRecovery onComplete={store.completeRecovery} />;
   if (!store.user) return <Auth />;
   if (!store.household) return <HouseholdSetup />;
   const nav = (name: Tab) => {
@@ -448,6 +461,7 @@ function Main() {
               )}
               {tab === "Overview" && (
                 <>
+                  <UpcomingPayments onManage={() => setTab("Balances")} />
                   <View
                     style={[
                       s.between,
@@ -2302,6 +2316,8 @@ function HouseholdSettings({ notify }: { notify: (m: string) => void }) {
   };
   return (
     <>
+      <SecuritySettings />
+      <AccessibilitySettings />
       <View>
         <Title>Your household</Title>
         <Txt style={{ color: C.muted, marginTop: 8 }}>
@@ -2652,6 +2668,7 @@ function Auth() {
     [code, setCode] = useState(""),
     [currency, setCurrency] = useState("USD");
   const lock = useRef(false);
+  const [forgot, setForgot] = useState(false);
   const [signup, setSignup] = useState(false),
     [name, setName] = useState(""),
     [email, setEmail] = useState(""),
@@ -2666,6 +2683,30 @@ function Auth() {
     setMessage("");
     setBusy(true);
     try {
+      if (forgot) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+          throw new Error("Enter a valid email address.");
+        if (browserPreviewEnabled)
+          setMessage(
+            "Preview only: no password-reset email was sent. Use a sample login or your existing preview password.",
+          );
+        else {
+          const { error } = await client().auth.resetPasswordForEmail(
+            email.trim(),
+            {
+              redirectTo:
+                Platform.OS === "web"
+                  ? window.location.origin + window.location.pathname
+                  : "splitcart://recovery",
+            },
+          );
+          if (error) throw error;
+          setMessage(
+            "If an account exists for this email, you’ll receive a password-reset link. Check your inbox and spam folder.",
+          );
+        }
+        return;
+      }
       if (signup && !name.trim()) throw new Error("Tell us your name.");
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
         throw new Error("Enter a valid email address.");
@@ -2755,7 +2796,11 @@ function Auth() {
             <Illustration />
           </View>
           <Title style={{ fontSize: 37, textAlign: "center" }}>
-            {signup ? "A happier home starts here." : "Welcome home."}
+            {forgot
+              ? "Reset your password."
+              : signup
+                ? "A happier home starts here."
+                : "Welcome home."}
           </Title>
           <Txt style={{ textAlign: "center", color: C.muted, lineHeight: 22 }}>
             Shared purchases. Fair splits. More time for the good stuff.
@@ -2798,13 +2843,15 @@ function Auth() {
             keyboardType="email-address"
             placeholder="you@example.com"
           />
-          <Field
-            label="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            placeholder="At least 8 characters"
-          />
+          {!forgot && (
+            <Field
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              placeholder="At least 8 characters"
+            />
+          )}
           {signup && (
             <View style={[s.card, { gap: 15 }]}>
               <HouseholdChoices
@@ -2831,24 +2878,46 @@ function Auth() {
             <Txt style={{ color: C.green, lineHeight: 22 }}>{message}</Txt>
           )}
           <Button
-            label={signup ? "Create account" : "Log in"}
+            label={
+              forgot
+                ? "Send password reset link"
+                : signup
+                  ? "Create account"
+                  : "Log in"
+            }
             icon="ArrowRight"
             loading={busy}
             onPress={submit}
           />
-          <Pressable
-            onPress={() => {
-              setSignup(!signup);
-              setError("");
-              setMessage("");
-            }}
-          >
-            <Txt style={{ textAlign: "center", fontSize: 12, color: C.green }}>
-              {signup
-                ? "Already at home here? Log in"
-                : "New to SplitCart? Create an account"}
-            </Txt>
-          </Pressable>
+          {!signup && (
+            <Button
+              secondary
+              label={forgot ? "Back to login" : "Forgot password?"}
+              disabled={busy}
+              onPress={() => {
+                setForgot(!forgot);
+                setError("");
+                setMessage("");
+              }}
+            />
+          )}
+          {!forgot && (
+            <Pressable
+              onPress={() => {
+                setSignup(!signup);
+                setError("");
+                setMessage("");
+              }}
+            >
+              <Txt
+                style={{ textAlign: "center", fontSize: 12, color: C.green }}
+              >
+                {signup
+                  ? "Already at home here? Log in"
+                  : "New to SplitCart? Create an account"}
+              </Txt>
+            </Pressable>
+          )}
           <View style={s.divider} />
           {!browserPreviewEnabled && (
             <Button

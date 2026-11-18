@@ -21,6 +21,8 @@ async function backend(page: Page) {
   let confirmEmail = false;
   let queue = Promise.resolve();
   const setupCalls: any[] = [];
+  const recoveryCalls: any[] = [],
+    passwordUpdates: any[] = [];
   const session = (user: any) => ({
     access_token: `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + 3600, role: "authenticated" })).toString("base64url")}.test-signature`,
     refresh_token: randomUUID(),
@@ -56,6 +58,14 @@ async function backend(page: Page) {
             "access-control-allow-methods": "*",
           },
         });
+        return;
+      }
+      if (path.endsWith("/recover")) {
+        recoveryCalls.push({
+          body: req.postDataJSON(),
+          redirect: url.searchParams.get("redirect_to"),
+        });
+        await respond({});
         return;
       }
       if (path.endsWith("/signup")) {
@@ -95,6 +105,8 @@ async function backend(page: Page) {
       } catch {}
       const user = [...users.values()].find((u) => u.id === sub);
       if (path.endsWith("/user")) {
+        if (req.method() === "PUT" && user)
+          passwordUpdates.push(req.postDataJSON());
         await respond(user || { message: "Not logged in" }, user ? 200 : 401);
         return;
       }
@@ -178,6 +190,9 @@ async function backend(page: Page) {
   return {
     setupCalls,
     users,
+    session,
+    recoveryCalls,
+    passwordUpdates,
     requireConfirmation: () => {
       confirmEmail = true;
     },
@@ -379,6 +394,83 @@ test("an incorrect signup code keeps the separate account and offers recovery wi
       page.getByText("Your household is ready", { exact: true }),
     ).toBeVisible();
     expect(api.users.size).toBe(1);
+  } finally {
+    await api.close();
+  }
+});
+
+test("password reset requests use a neutral response and recovery links open the new-password form", async ({
+  page,
+}) => {
+  const api = await backend(page);
+  try {
+    await liveSignup(page);
+    await credentials(page, "Recovery User", "recovery@example.com");
+    await page
+      .getByLabel("Household name", { exact: true })
+      .fill("Recovery Home");
+    await page
+      .getByRole("button", { name: "Create account", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Go to dashboard", exact: true })
+      .click();
+    await signOut(page);
+    await page
+      .getByRole("button", { name: "Forgot password?", exact: true })
+      .click();
+    await page
+      .getByLabel("Email address", { exact: true })
+      .fill("recovery@example.com");
+    await page
+      .getByRole("button", { name: "Send password reset link", exact: true })
+      .click();
+    await expect(
+      page.getByText(/If an account exists for this email/),
+    ).toBeVisible();
+    expect(api.recoveryCalls).toHaveLength(1);
+    expect(api.recoveryCalls[0].body.email).toBe("recovery@example.com");
+    expect(api.recoveryCalls[0].redirect).toBe("http://localhost:8082/");
+    const session = api.session(api.users.get("recovery@example.com"));
+    const fragment = new URLSearchParams({
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_in: "3600",
+      token_type: "bearer",
+      type: "recovery",
+    });
+    await page.goto("/#" + fragment.toString());
+    await expect(
+      page.getByText("Choose a new password", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByLabel("New password", { exact: true })
+      .fill("new-password123");
+    await page
+      .getByLabel("Confirm new password", { exact: true })
+      .fill("different-password");
+    await page
+      .getByRole("button", { name: "Save new password", exact: true })
+      .click();
+    await expect(
+      page.getByText("The passwords do not match.", { exact: true }),
+    ).toBeVisible();
+    expect(api.passwordUpdates).toHaveLength(0);
+    await page
+      .getByLabel("Confirm new password", { exact: true })
+      .fill("new-password123");
+    await page
+      .getByRole("button", { name: "Save new password", exact: true })
+      .click();
+    await expect(
+      page.getByText("Hey Recovery, welcome home.", { exact: true }),
+    ).toBeVisible();
+    expect(api.passwordUpdates[0].password).toBe("new-password123");
+    await signOut(page);
+    await page.goto("/?source=recovery#" + fragment.toString());
+    await expect(
+      page.getByText("Choose a new password", { exact: true }),
+    ).toBeVisible();
   } finally {
     await api.close();
   }

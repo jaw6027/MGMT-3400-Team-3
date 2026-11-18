@@ -5,6 +5,7 @@ import {
   dueDate,
   reminderDate,
   validateReminder,
+  shouldRemind,
   type Funding,
 } from "../_shared/payment-rules.ts";
 
@@ -49,6 +50,40 @@ async function account(userId: string) {
       .eq("user_id", userId)
       .single(),
   );
+}
+async function notify(
+  userId: string,
+  message: string,
+  eventKey: string = crypto.randomUUID(),
+) {
+  result(
+    await db
+      .from("payment_notifications")
+      .upsert(
+        { user_id: userId, event_key: eventKey, message },
+        { onConflict: "user_id,event_key", ignoreDuplicates: true },
+      ),
+  );
+}
+async function failedAutopay(order: any) {
+  if (!order.due_id) return;
+  const d = result(
+    await db
+      .from("payment_dues")
+      .select("*")
+      .eq("id", order.due_id)
+      .maybeSingle(),
+  );
+  if (!d || !(order.automatic ?? d.automatic)) return;
+  await notify(
+    order.user_id,
+    `Automatic payment of $${(order.cents / 100).toFixed(2)} for ${order.due_date} needs attention. Check payment activity and your bank before paying again.`,
+    `autopay-${order.due_id}-${order.due_date}`,
+  );
+  const a = await account(order.user_id);
+  const { data } = await db.auth.admin.getUserById(order.user_id);
+  if (data.user && a.reminder_consent_at)
+    await remind(d, order.due_date, a, data.user, "failure");
 }
 async function customer(user: any, a: any) {
   if (a.customer_id) return a.customer_id as string;
@@ -166,6 +201,7 @@ async function syncIntent(order: any, pi: Stripe.PaymentIntent) {
         new_status: "failed",
       }),
     );
+    await failedAutopay(order);
     return;
   }
   if (pi.status === "succeeded")
@@ -193,6 +229,8 @@ async function syncIntent(order: any, pi: Stripe.PaymentIntent) {
         .eq("id", order.id)
         .in("status", ["created", "processing", "requires_action", "failed"]),
     );
+    if (["failed", "requires_action"].includes(status))
+      await failedAutopay(order);
   }
 }
 async function charge(user: any, input: any, due?: any) {
@@ -201,6 +239,31 @@ async function charge(user: any, input: any, due?: any) {
     a = await account(user.id);
   check(a.customer_id, "Add a bank account or card first.");
   const { pm, funding } = await method(a.customer_id, input.method);
+  if (input.dueId && !due) {
+    check(uuid(input.dueId), "Invalid scheduled due.");
+    const d = result(
+      await db
+        .from("payment_dues")
+        .select("*")
+        .eq("id", input.dueId)
+        .eq("user_id", user.id)
+        .eq("household_id", self.household_id)
+        .single(),
+    );
+    check(
+      d &&
+        typeof input.dueDate === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(input.dueDate) &&
+        dueDate(input.dueDate.slice(0, 7), d.due_day) === input.dueDate &&
+        input.dueDate >= d.created_at.slice(0, 10),
+      "Invalid scheduled occurrence.",
+    );
+    check(
+      input.cents === d.cents && input.recipient === (d.recipient_id || "app"),
+      "The schedule changed. Refresh before paying.",
+    );
+    due = { id: d.id, date: input.dueDate, offSession: false };
+  }
   const to = await recipient(self, input.recipient);
   const cents = Number(input.cents);
   if (!to)
@@ -222,24 +285,35 @@ async function charge(user: any, input: any, due?: any) {
       .maybeSingle(),
   );
   if (!order) {
-    const inserted = await db
-      .from("payment_orders")
-      .insert({
-        id: input.id,
-        user_id: user.id,
-        household_id: self.household_id,
-        from_id: self.id,
-        recipient_id: to?.member.id || null,
-        cents,
-        fee: q.fee,
-        funding,
-        payment_method: pm.id,
-        destination: to?.destination || null,
-        due_id: due?.id || null,
-        due_date: due?.date || null,
-      })
-      .select()
-      .single();
+    const orderData = {
+      id: input.id,
+      user_id: user.id,
+      household_id: self.household_id,
+      from_id: self.id,
+      recipient_id: to?.member.id || null,
+      cents,
+      fee: q.fee,
+      funding,
+      payment_method: pm.id,
+      destination: to?.destination || null,
+      due_id: due?.id || null,
+      due_date: due?.date || null,
+      method_label: methodLabel(pm),
+      request_id: input.requestId || null,
+      automatic: !!due?.offSession,
+    };
+    check(
+      !input.requestId || (!due && uuid(input.requestId)),
+      "Invalid request payment.",
+    );
+    const inserted = input.requestId
+      ? await db.rpc("reserve_request_payment", { order_data: orderData })
+      : due
+        ? await db.rpc("reserve_due_payment", {
+            order_data: orderData,
+            off_session: !!due.offSession,
+          })
+        : await db.from("payment_orders").insert(orderData).select().single();
     if (inserted.error?.code === "23505") {
       order = due
         ? result(
@@ -312,7 +386,7 @@ async function charge(user: any, input: any, due?: any) {
     try {
       pi = await stripe.paymentIntents.confirm(
         pi.id,
-        { off_session: !!due, return_url: env("APP_URL") },
+        { off_session: !!due?.offSession, return_url: env("APP_URL") },
         { idempotencyKey: `confirm-${order.id}` },
       );
     } catch (error) {
@@ -380,22 +454,76 @@ async function status(user: any) {
         await stripe.paymentIntents.retrieve(order.stripe_intent),
       );
   }
-  const dues = result(
+  const self = result(
     await db
-      .from("payment_dues")
-      .select("*")
+      .from("members")
+      .select("id,household_id")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false }),
+      .is("left_at", null)
+      .maybeSingle(),
   );
-  const payments = result(
+  const dues = self
+    ? result(
+        await db
+          .from("payment_dues")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("household_id", self.household_id)
+          .order("created_at", { ascending: false }),
+      )
+    : [];
+  const payments: any[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const page = result(
+      await db
+        .from("payment_orders")
+        .select(
+          "id,cents,fee,status,created_at,recipient_id,method_label,payment_method,due_id,due_date,request_id",
+        )
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(offset, offset + 499),
+    );
+    payments.push(...(page || []));
+    if (!page || page.length < 500) break;
+  }
+  const requests = self
+    ? result(
+        await db
+          .from("payment_requests")
+          .select("*,payment_orders(status)")
+          .eq("household_id", self.household_id)
+          .or(`requester_id.eq.${self.id},payer_id.eq.${self.id}`)
+          .order("created_at", { ascending: false })
+          .limit(100),
+      )
+    : [];
+  const notifications = result(
     await db
-      .from("payment_orders")
-      .select("id,cents,fee,status,created_at,recipient_id")
+      .from("payment_notifications")
+      .select("id,message,created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(30),
   );
   return {
+    requests: (requests || []).map((r: any) => ({
+      id: r.id,
+      requester: r.requester_id,
+      payer: r.payer_id,
+      cents: r.cents,
+      note: r.note,
+      expenseId: r.expense_id,
+      canceled: r.canceled,
+      created_at: r.created_at,
+      status: r.canceled
+        ? "canceled"
+        : r.payment_orders?.find(
+            (p: any) => !["failed", "canceled"].includes(p.status),
+          )?.status || "open",
+    })),
+    notifications,
     phoneVerified: a.phone_verified,
     available: enabled(),
     appDues: appDues(),
@@ -416,10 +544,16 @@ async function status(user: any) {
       automatic: d.automatic,
       method: d.payment_method,
       consent: !!d.consent_at,
+      paused: d.paused,
+      created_at: d.created_at,
     })),
     payments: (payments || []).map((p: any) => ({
       ...p,
       recipient: p.recipient_id || "app",
+      methodLabel: p.method_label,
+      dueId: p.due_id,
+      dueDate: p.due_date,
+      requestId: p.request_id,
     })),
   };
 }
@@ -445,8 +579,11 @@ async function twilio(path: string, fields: Record<string, string>) {
     );
   return json;
 }
-async function remind(d: any, date: string, a: any, user: any) {
-  const text = `SplitCart: your $${(d.cents / 100).toFixed(2)} due is on ${date} (UTC). ${d.automatic ? "Autopay is enabled; check payment status in the app." : "Open SplitCart to review and pay."}`;
+async function remind(d: any, date: string, a: any, user: any, kind = "due") {
+  const text =
+    kind === "failure"
+      ? `SplitCart: automatic payment of $${(d.cents / 100).toFixed(2)} for ${date} needs attention. Check payment activity and your bank before paying again.`
+      : `SplitCart: your $${(d.cents / 100).toFixed(2)} due is on ${date} (UTC). ${d.automatic ? "Autopay is enabled; check payment status in the app." : "Open SplitCart to review and pay."}`;
   for (const channel of ["email", "sms"]) {
     if (
       !(channel === "email"
@@ -454,11 +591,29 @@ async function remind(d: any, date: string, a: any, user: any) {
         : a.sms_reminders && a.phone_verified)
     )
       continue;
+    const latest = result(
+      await db
+        .from("payment_orders")
+        .select("status")
+        .eq("due_id", d.id)
+        .eq("due_date", date)
+        .maybeSingle(),
+    );
+    if (
+      kind === "due"
+        ? !shouldRemind(latest?.status, d.paused)
+        : latest?.status === "succeeded"
+    )
+      continue;
     // Claim before sending: concurrent scheduler runs cannot send duplicates.
     // Ambiguous deliveries remain claimed for operator review, never blind retry.
-    const claim = await db
-      .from("payment_reminder_deliveries")
-      .insert({ due_id: d.id, due_date: date, channel, status: "sending" });
+    const claim = await db.from("payment_reminder_deliveries").insert({
+      due_id: d.id,
+      due_date: date,
+      channel,
+      kind,
+      status: "sending",
+    });
     if (claim.error?.code === "23505") continue;
     result(claim);
     try {
@@ -486,12 +641,15 @@ async function remind(d: any, date: string, a: any, user: any) {
           headers: {
             Authorization: `Bearer ${env("RESEND_API_KEY")}`,
             "Content-Type": "application/json",
-            "Idempotency-Key": `reminder-${d.id}-${date}`,
+            "Idempotency-Key": `reminder-${kind}-${d.id}-${date}`,
           },
           body: JSON.stringify({
             from: env("REMINDER_FROM_EMAIL"),
             to: [user.email],
-            subject: "Your SplitCart payment reminder",
+            subject:
+              kind === "failure"
+                ? "Your SplitCart automatic payment needs attention"
+                : "Your SplitCart payment reminder",
             text: `${text}\n\nTurn off email reminders: ${stop}`,
           }),
         });
@@ -503,7 +661,8 @@ async function remind(d: any, date: string, a: any, user: any) {
           .update({ status: "sent" })
           .eq("due_id", d.id)
           .eq("due_date", date)
-          .eq("channel", channel),
+          .eq("channel", channel)
+          .eq("kind", kind),
       );
     } catch (e) {
       result(
@@ -512,7 +671,8 @@ async function remind(d: any, date: string, a: any, user: any) {
           .update({ status: "failed" })
           .eq("due_id", d.id)
           .eq("due_date", date)
-          .eq("channel", channel),
+          .eq("channel", channel)
+          .eq("kind", kind),
       );
       if (e instanceof Error && e.message === "SMS_OPTED_OUT")
         result(
@@ -545,6 +705,7 @@ async function worker() {
     for (const d of dues || []) {
       visited++;
       try {
+        if (d.paused) continue;
         const a = await account(d.user_id);
         const { data, error } = await db.auth.admin.getUserById(d.user_id);
         check(!error && data.user, "Account unavailable.");
@@ -560,6 +721,7 @@ async function worker() {
           );
         for (const month of [today.slice(0, 7), next]) {
           const date = dueDate(month, d.due_day);
+          if (d.created_at && date < d.created_at.slice(0, 10)) continue;
           const existing = result(
             await db
               .from("payment_orders")
@@ -571,7 +733,7 @@ async function worker() {
           if (
             a.reminder_consent_at &&
             reminderDate(date, a.reminder_days) === today &&
-            existing?.status !== "succeeded"
+            shouldRemind(existing?.status, d.paused)
           )
             await remind(d, date, a, user);
           if (date === today && d.automatic && d.consent_at) {
@@ -592,12 +754,28 @@ async function worker() {
                 total: d.cents,
                 consent: true,
               },
-              { id: d.id, date },
+              { id: d.id, date, offSession: true },
             );
           }
         }
       } catch {
         failures++;
+        if (
+          d.automatic &&
+          !d.paused &&
+          dueDate(today.slice(0, 7), d.due_day) === today
+        ) {
+          try {
+            await failedAutopay({
+              due_id: d.id,
+              due_date: today,
+              cents: d.cents,
+              user_id: d.user_id,
+            });
+          } catch {
+            /* Next scheduler run retries the durable alert. */
+          }
+        }
       }
     }
     if (!dues || dues.length < 100) break;
@@ -733,6 +911,79 @@ export async function handler(req: Request) {
       a = await account(user.id);
     const action = input.action;
     if (action === "status") return send(await status(user));
+    if (action === "pause_due") {
+      check(
+        input.paused === true,
+        "Use edit schedule and fresh authorization to resume autopay.",
+      );
+      const updated = result(
+        await db
+          .from("payment_dues")
+          .update({ paused: true })
+          .eq("id", input.id)
+          .eq("user_id", user.id)
+          .select("id")
+          .single(),
+      );
+      check(updated, "Schedule unavailable.");
+      await notify(
+        user.id,
+        "A monthly payment schedule was paused. Payments already processing may still complete.",
+      );
+      return send({ ok: true });
+    }
+    if (action === "create_request") {
+      const self = await member(user.id),
+        r = input.request;
+      check(
+        r && uuid(r.id) && typeof r.note === "string" && r.note.length <= 240,
+        "Invalid payment request.",
+      );
+      quote(r.cents, "bank");
+      const payer = await recipient(self, r.payer, false);
+      check(payer, "Choose a roommate.");
+      if (r.expenseId) {
+        const expense = result(
+          await db
+            .from("expenses")
+            .select("id")
+            .eq("id", r.expenseId)
+            .eq("household_id", self.household_id)
+            .maybeSingle(),
+        );
+        check(expense, "Choose an expense in this household.");
+      }
+      result(
+        await db.from("payment_requests").upsert(
+          {
+            id: r.id,
+            household_id: self.household_id,
+            requester_id: self.id,
+            payer_id: payer.member.id,
+            cents: r.cents,
+            note: r.note,
+            expense_id: r.expenseId || null,
+          },
+          { onConflict: "id", ignoreDuplicates: true },
+        ),
+      );
+      await notify(
+        payer.member.user_id,
+        "A roommate sent you a payment request. Open Requests to review it.",
+        `request-${r.id}`,
+      );
+      return send({ ok: true });
+    }
+    if (action === "cancel_request") {
+      const self = await member(user.id);
+      result(
+        await db.rpc("cancel_payment_request", {
+          request_uuid: input.id,
+          member_uuid: self.id,
+        }),
+      );
+      return send({ ok: true });
+    }
     if (action === "cancel_due") {
       result(
         await db
@@ -741,6 +992,7 @@ export async function handler(req: Request) {
           .eq("id", input.id)
           .eq("user_id", user.id),
       );
+      await notify(user.id, "A monthly payment schedule was canceled.");
       return send({ ok: true });
     }
     if (action === "reminders") {
@@ -778,6 +1030,10 @@ export async function handler(req: Request) {
             reminder_consent_at: r.consent ? new Date().toISOString() : null,
           })
           .eq("user_id", user.id),
+      );
+      await notify(
+        user.id,
+        "Payment reminder preferences were changed. Review Reminders if you did not make this change.",
       );
       return send({ ok: true });
     }
@@ -831,7 +1087,7 @@ export async function handler(req: Request) {
       }
       return send({ ok: true });
     }
-    if (action === "save_due") {
+    if (action === "save_due" || action === "update_due") {
       const d = input.due,
         self = await member(user.id);
       check(d && typeof d.automatic === "boolean", "Invalid monthly due.");
@@ -850,17 +1106,46 @@ export async function handler(req: Request) {
           m?.funding === "bank" && d.consent === true,
           "Choose a bank account and authorize automatic payments.",
         );
+      if (action === "update_due") {
+        const prior = result(
+          await db
+            .from("payment_dues")
+            .select("id,recipient_id")
+            .eq("id", d.id)
+            .eq("user_id", user.id)
+            .eq("household_id", self.household_id)
+            .single(),
+        );
+        check(
+          prior && prior.recipient_id === (to?.member.id || null),
+          "Schedule unavailable or recipient changed.",
+        );
+      }
+      const schedule = {
+        user_id: user.id,
+        household_id: self.household_id,
+        recipient_id: to?.member.id || null,
+        cents: d.cents,
+        due_day: d.day,
+        automatic: d.automatic,
+        payment_method: d.automatic ? d.method : "",
+        consent_at: d.consent ? new Date().toISOString() : null,
+        paused: false,
+      };
       result(
-        await db.from("payment_dues").insert({
-          user_id: user.id,
-          household_id: self.household_id,
-          recipient_id: to?.member.id || null,
-          cents: d.cents,
-          due_day: d.day,
-          automatic: d.automatic,
-          payment_method: d.automatic ? d.method : "",
-          consent_at: d.consent ? new Date().toISOString() : null,
-        }),
+        action === "update_due"
+          ? await db
+              .from("payment_dues")
+              .update(schedule)
+              .eq("id", d.id)
+              .eq("user_id", user.id)
+          : await db.from("payment_dues").insert(schedule),
+      );
+      await notify(
+        user.id,
+        action === "update_due"
+          ? "A monthly payment schedule was updated. Review the amount, bank, and next charge in Autopay."
+          : "A monthly payment schedule was created.",
       );
       return send({ ok: true });
     }
@@ -890,6 +1175,10 @@ export async function handler(req: Request) {
         success_url: env("APP_URL"),
         cancel_url: env("APP_URL"),
       });
+      await notify(
+        user.id,
+        "Secure payment-method setup was opened. Return to Accounts to verify any changes.",
+      );
       return send({ url: session.url });
     }
     if (action === "payout_setup") {
@@ -918,6 +1207,10 @@ export async function handler(req: Request) {
         refresh_url: env("APP_URL"),
         return_url: env("APP_URL"),
       });
+      await notify(
+        user.id,
+        "Receiving-bank setup was opened. Review Accounts if you did not make this change.",
+      );
       return send({ url: link.url });
     }
     if (action === "remove_method") {
@@ -935,6 +1228,10 @@ export async function handler(req: Request) {
         "Cancel automatic dues using this method before removing it.",
       );
       await stripe.paymentMethods.detach(m.pm.id);
+      await notify(
+        user.id,
+        "A payment method was removed. Review Accounts if you did not make this change.",
+      );
       return send({ ok: true });
     }
     if (action === "authenticate") {

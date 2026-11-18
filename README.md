@@ -53,7 +53,7 @@ For a physical Android device, scan the QR code in compatible Expo Go or connect
 
 ## Enable the live Supabase backend
 
-1. Create a Supabase project. In its SQL Editor, apply every SQL file in `supabase/migrations/` **once, in filename order**. For an existing project, apply only migrations not already installed. The base migration creates tables, RLS, and private receipts; `202611170001_payments.sql` adds payment support; `202611180001_household_signup.sql` adds retry-safe signup onboarding and household renaming. No manual public-bucket setup is necessary.
+1. Create a Supabase project. In its SQL Editor, apply every SQL file in `supabase/migrations/` **once, in filename order**. For an existing project, apply only migrations not already installed. The base migration creates tables, RLS, and private receipts; `202611170001_payments.sql` adds payment support; `202611180001_household_signup.sql` adds retry-safe signup onboarding and household renaming; `202611180002_payment_experience.sql` adds paused schedules, payment requests, private account alerts, and serialized occurrence payments. No manual public-bucket setup is necessary.
 2. Copy your project URL and **public anon key** from Project Settings → API into `.env`:
 
    ```dotenv
@@ -134,7 +134,7 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 - Use pull-to-refresh to see another roommate's latest changes. No realtime sync, offline queue, push notifications, or multi-household switcher.
 - A manually recorded repayment is an append-only ledger entry; editing/reversing manual repayments is not included. Double-check before confirming.
 - Client deletion removes a purchase and its shares. Original receipt files remain private, including abandoned uploads. Add a trusted scheduled cleanup job after choosing a retention policy; no service credentials belong in the client.
-- No invite rotation, password-reset UI, account deletion/export UI, or household administration roles in this MVP. Account erasure should use a trusted server-side process that preserves/anonymizes the ledger appropriately.
+- No invite rotation, account deletion/export UI, or household administration roles in this MVP. Account erasure should use a trusted server-side process that preserves/anonymizes the ledger appropriately.
 - Receipt recognition, subscriptions, shopping lists, and currency conversion are deliberately deferred. Live bank/card processing and text/email reminders require the provider deployment described below.
 
 ## Project map
@@ -153,6 +153,15 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 
 Open **Balances → Manage payments** for hosted bank/card setup, receiving-bank onboarding, a payment review with a **2.5% credit-card-only surcharge**, fixed monthly bank autopay, and verified email/text reminder preferences. Demo mode uses sample accounts and simulated payments; it never moves funds or sends messages. Live use requires the additional migration, deployed Edge Function, Stripe Connect, Twilio, Resend, and a recurring job. See [payment setup and operational details](docs/payments.md) for configuration, test steps, and current limits.
 
-Payment controls are organized into **Accounts**, **Pay**, **Autopay**, **Reminders**, and **Activity**. Accounts explains paying versus receiving setup. Pay shows a running fee estimate and the selected method in the final confirmation. Autopay keeps the recipient, amount, bank, and consent together. Reminders shows phone verification and timing, hiding completed verification steps until the number changes. Autopay covers fixed monthly dues, not a changing household balance; reminder dates use UTC.
+The home screen includes an **Upcoming payments** dashboard. Payment controls are organized into **Upcoming**, **Accounts**, **Pay**, **Autopay**, **Reminders**, **Requests**, and **Activity**. Accounts explains paying versus receiving setup. Pay shows a running fee estimate and the selected method in the final confirmation. Autopay keeps the recipient, amount, bank, and consent together, supports editing and pausing without deleting the schedule, and shows the next automatic charge. Requests attach a purchase to a specific roommate’s requested amount; completed payments update the request status. Activity has status explanations, search, and downloadable text receipts (native uses the share sheet). Reminders shows phone verification and timing, hiding completed verification steps until the number changes. Autopay covers fixed monthly dues, not a changing household balance; reminder dates use UTC.
 
-Screenshots of the actual sample-account flows: [all four screens](docs/previews/overview.png), [bank and card setup](docs/previews/accounts.png), [credit-card fee preview](docs/previews/payment.png), [monthly bank autopay](docs/previews/autopay.png), and [email/text reminders](docs/previews/reminders.png).
+Screenshots of the actual sample-account flows: [upcoming payments and history](docs/previews/experience.png), [payment requests](docs/previews/requests.png), [the original four payment screens](docs/previews/overview.png), [bank and card setup](docs/previews/accounts.png), [credit-card fee preview](docs/previews/payment.png), [monthly bank autopay](docs/previews/autopay.png), and [email/text reminders](docs/previews/reminders.png).
+
+
+## Recovery, device unlock, and accessibility
+
+**Forgot password?** requests a Supabase recovery email with a neutral response. Add your exact web app URL and `splitcart://recovery` to Supabase Auth’s allowed redirect URLs and configure recovery-email delivery. Open the recovery link to choose and confirm a new password. Browser preview displays an explicit simulation message and never sends a reset email or changes a preview password. Native implicit recovery links are handled by the app; test link delivery and expired links on physical devices before release.
+
+**Household → Account security** enables optional biometric unlock on supported iOS/Android devices with enrolled biometrics. Enabling/disabling requires a biometric check; the app locks on launch and after backgrounding. The lock does not replace server authentication or encrypt stored Supabase sessions. Signing out from the lock clears this device’s unlock preference so a subsequent password login can recover access if biometrics become unavailable. Face ID requires a native development/production build with the included permission plugin; Expo Go does not support Face ID. Web disables the biometric option. Physical-device biometric behavior still needs validation.
+
+**Household → Accessibility** provides a persistent larger-text preference in addition to native system text scaling. Shared buttons/chips have at least 44-point targets, labels wrap, input placeholders use the stronger muted-text contrast, headings are announced, and buttons expose disabled/busy states. Verify screen-reader behavior with VoiceOver/TalkBack on real devices.

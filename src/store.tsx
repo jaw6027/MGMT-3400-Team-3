@@ -1,3 +1,4 @@
+import { Linking, Platform } from "react-native";
 import React, {
   createContext,
   useContext,
@@ -12,6 +13,7 @@ import {
   supabase,
   client,
   demoDefault,
+  recoveryLinkAtStartup,
   loadData,
   saveLiveExpense,
 } from "./backend";
@@ -37,6 +39,53 @@ export function Provider({ children }: { children: React.ReactNode }) {
     [user, setUser] = useState<AccountUser | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState("");
+  const [recovering, setRecovering] = useState(recoveryLinkAtStartup);
+  useEffect(() => {
+    if (!supabase) return;
+    const recover = async (url: string | null) => {
+      if (
+        !url ||
+        (Platform.OS !== "web" && !url.startsWith("splitcart://recovery"))
+      )
+        return;
+      try {
+        const parsed = new URL(url);
+        const values = new URLSearchParams(parsed.hash.slice(1));
+        if (values.get("type") !== "recovery") return;
+        const access_token = values.get("access_token"),
+          refresh_token = values.get("refresh_token");
+        if (!access_token || !refresh_token) return;
+        const { error } = await supabase!.auth.setSession({
+          access_token,
+          refresh_token,
+        });
+        if (error) throw error;
+        setRecovering(true);
+        setDemo(false);
+        if (Platform.OS === "web")
+          window.history.replaceState(
+            {},
+            "",
+            window.location.pathname + window.location.search,
+          );
+      } catch {
+        setError(
+          "This recovery link is invalid or expired. Request another password reset.",
+        );
+      }
+    };
+    if (Platform.OS === "web") {
+      const handler = () => void recover(window.location.href);
+      window.addEventListener("hashchange", handler);
+      return () => window.removeEventListener("hashchange", handler);
+    }
+    void Linking.getInitialURL().then(recover);
+    const sub = Linking.addEventListener(
+      "url",
+      (event) => void recover(event.url),
+    );
+    return () => sub.remove();
+  }, []);
   const [householdIntent, setHouseholdIntent] =
     useState<HouseholdIntent | null>(null);
   const [householdWelcome, setHouseholdWelcome] = useState(false);
@@ -148,6 +197,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (_event === "PASSWORD_RECOVERY") setRecovering(true);
+      if (_event === "SIGNED_OUT") setRecovering(false);
       setTimeout(() => {
         void enqueue(session);
       }, 0);
@@ -292,6 +343,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{
         ...data,
+        recovering,
+        completeRecovery: () => setRecovering(false),
         user,
         demo: demo || browserPreviewEnabled,
         loading,
@@ -321,8 +374,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
           setDemo(!demo);
         },
         reset: async () => {
-          const keys = (await AsyncStorage.getAllKeys()).filter((key) =>
-            key.startsWith("splitcart-payments-demo-v1-"),
+          const keys = (await AsyncStorage.getAllKeys()).filter(
+            (key) =>
+              key.startsWith("splitcart-payments-demo-v1-") ||
+              key.startsWith("splitcart-requests-demo-v1-"),
           );
           if (keys.length) await AsyncStorage.multiRemove(keys);
           if (browserPreviewEnabled) {
@@ -343,6 +398,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
   );
 }
 export function useStore(): Data & {
+  recovering: boolean;
+  completeRecovery: () => void;
   user: AccountUser | null;
   demo: boolean;
   loading: boolean;
