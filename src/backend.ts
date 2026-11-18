@@ -6,20 +6,34 @@ import { decode } from "base64-arraybuffer";
 import { File } from "expo-file-system";
 import * as Crypto from "expo-crypto";
 import { Data, Expense, validateImage } from "./core";
+import {
+  browserPreviewEnabled,
+  browserPreviewBackend,
+  previewOrigin,
+} from "./browserPreview";
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 export const liveConfigured = Boolean(url && key);
-export const demoDefault = process.env.EXPO_PUBLIC_DEMO_MODE !== "false";
-export const supabase = liveConfigured
-  ? createClient(url!, key!, {
-      auth: {
-        storage: AsyncStorage,
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInUrl: Platform.OS === "web",
-      },
-    })
-  : null;
+export const demoDefault =
+  !browserPreviewEnabled && process.env.EXPO_PUBLIC_DEMO_MODE !== "false";
+export const supabase =
+  liveConfigured || browserPreviewEnabled
+    ? createClient(
+        browserPreviewEnabled ? previewOrigin : url!,
+        browserPreviewEnabled ? "preview-public-key" : key!,
+        {
+          ...(browserPreviewEnabled
+            ? { global: { fetch: browserPreviewBackend.fetch } }
+            : {}),
+          auth: {
+            storage: AsyncStorage,
+            autoRefreshToken: true,
+            persistSession: true,
+            detectSessionInUrl: Platform.OS === "web",
+          },
+        },
+      )
+    : null;
 if (Platform.OS !== "web" && supabase)
   AppState.addEventListener("change", (state) =>
     state === "active"
@@ -80,6 +94,12 @@ export async function receiptUrl(path: string) {
     path.startsWith("blob:")
   )
     return path;
+  if (browserPreviewEnabled) {
+    const { data, error } = await client().auth.getUser();
+    if (error || !data.user)
+      throw new Error("Log in to view this preview receipt.");
+    return browserPreviewBackend.receipt(path, data.user.id);
+  }
   const { data, error } = await client()
     .storage.from("receipts")
     .createSignedUrl(path, 300);
@@ -100,6 +120,12 @@ export async function uploadReceipt(
   const ext =
     type === "image/png" ? "png" : type === "image/webp" ? "webp" : "jpg";
   const path = `${household}/${userId}/${uid()}.${ext}`;
+  if (browserPreviewEnabled) {
+    const { data, error } = await client().auth.getUser();
+    if (error || data.user?.id !== userId)
+      throw new Error("Log in to attach a preview receipt.");
+    return browserPreviewBackend.upload(path, bytes, type, userId);
+  }
   const { error } = await client()
     .storage.from("receipts")
     .upload(path, bytes, { contentType: type, upsert: false });

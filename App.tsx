@@ -65,6 +65,11 @@ import {
 } from "./src/ui";
 import Illustration from "./src/Illustration";
 import PaymentsPanel from "./src/PaymentsPanel";
+import {
+  browserPreviewEnabled,
+  previewSampleEmail,
+  previewSamplePassword,
+} from "./src/browserPreview";
 type Tab = "Overview" | "Purchases" | "Balances" | "Household";
 const tabs: { name: Tab; icon: IconName }[] = [
   { name: "Overview", icon: "Home" },
@@ -1618,7 +1623,7 @@ function PurchaseEditor({
       };
       validateExpense(purchase, st.members);
       if (asset) {
-        if (st.demo) {
+        if (st.demo && !browserPreviewEnabled) {
           if (Platform.OS === "web") {
             const response = await fetch(asset.uri);
             const blob = await response.blob();
@@ -2256,7 +2261,9 @@ function HouseholdInvitation({
       />
       <Txt style={{ fontSize: 11, color: C.muted, lineHeight: 18 }}>
         {st.demo
-          ? "Sample code only. Enable live accounts to invite real roommates."
+          ? browserPreviewEnabled
+            ? "Preview codes link separate sample logins in this browser only. No email is sent and nothing syncs between devices."
+            : "Sample code only. Enable live accounts to invite real roommates."
           : "This code gives access to your household’s shared purchases and receipts. Share it only with your roommates."}
       </Txt>
       {error !== "" && (
@@ -2387,16 +2394,24 @@ function HouseholdSettings({ notify }: { notify: (m: string) => void }) {
         <Title style={{ fontSize: 23 }}>Settings</Title>
         <Txt style={{ fontSize: 12, color: C.muted, lineHeight: 20 }}>
           {st.demo
-            ? "You’re exploring SplitCart with a sample household. Demo changes are saved on this device."
+            ? browserPreviewEnabled
+              ? "Full browser preview: use made-up account details and sample receipts. Purchases, local accounts, codes, and payment simulations are saved only in this browser. No real money, emails, or texts are sent."
+              : "You’re exploring SplitCart with a sample household. Demo changes are saved on this device."
             : "You’re using a live Supabase household. Pull down on a screen to refresh shared activity."}
         </Txt>
         <Button
           secondary
           icon="RefreshCw"
-          label={st.demo ? "Switch to live accounts" : "Explore demo mode"}
+          label={
+            browserPreviewEnabled
+              ? "Switch preview account"
+              : st.demo
+                ? "Switch to live accounts"
+                : "Explore demo mode"
+          }
           onPress={st.switchMode}
         />
-        {!liveConfigured && st.demo && (
+        {!browserPreviewEnabled && !liveConfigured && st.demo && (
           <Txt style={{ fontSize: 11, color: C.muted, lineHeight: 18 }}>
             Live setup: add your Supabase URL and public anon key to .env, apply
             the migration, then restart Expo. Full steps are in the README.
@@ -2704,6 +2719,38 @@ function Auth() {
       >
         <View style={{ width: "100%", maxWidth: 420, gap: 21 }}>
           <Logo />
+          {browserPreviewEnabled && (
+            <Button
+              secondary
+              label={
+                browserPreviewEnabled
+                  ? "Open sample household"
+                  : "Explore the demo"
+              }
+              icon="Leaf"
+              loading={browserPreviewEnabled && busy}
+              onPress={
+                browserPreviewEnabled
+                  ? async () => {
+                      setBusy(true);
+                      setError("");
+                      try {
+                        const { error } =
+                          await client().auth.signInWithPassword({
+                            email: previewSampleEmail,
+                            password: previewSamplePassword,
+                          });
+                        if (error) throw error;
+                      } catch (e: any) {
+                        setError(e.message);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }
+                  : st.switchMode
+              }
+            />
+          )}
           <View style={{ alignItems: "center", marginVertical: 4 }}>
             <Illustration />
           </View>
@@ -2713,6 +2760,29 @@ function Auth() {
           <Txt style={{ textAlign: "center", color: C.muted, lineHeight: 22 }}>
             Shared purchases. Fair splits. More time for the good stuff.
           </Txt>
+          {browserPreviewEnabled && (
+            <View
+              style={{
+                backgroundColor: C.sage,
+                padding: 14,
+                borderRadius: 10,
+                gap: 7,
+              }}
+            >
+              <Txt style={{ fontFamily: "DMBold", color: C.green }}>
+                Interactive browser preview
+              </Txt>
+              <Txt style={{ fontSize: 12, lineHeight: 20, color: C.green }}>
+                Use made-up details. Accounts and household codes work in this
+                browser only. Payments, email, and SMS are simulations.
+              </Txt>
+              <Txt style={{ fontSize: 11, color: C.green }}>
+                Sample logins: alex@splitcart.demo, jordan@splitcart.demo,
+                sam@splitcart.demo, riley@splitcart.demo. Password:
+                splitcart-demo
+              </Txt>
+            </View>
+          )}
           {signup && (
             <Field
               label="Your name"
@@ -2780,12 +2850,14 @@ function Auth() {
             </Txt>
           </Pressable>
           <View style={s.divider} />
-          <Button
-            secondary
-            label="Explore the demo"
-            icon="Leaf"
-            onPress={st.switchMode}
-          />
+          {!browserPreviewEnabled && (
+            <Button
+              secondary
+              label="Explore the demo"
+              icon="Leaf"
+              onPress={st.switchMode}
+            />
+          )}
           <Txt style={{ fontSize: 10, color: C.muted, textAlign: "center" }}>
             A sample home, ready to explore. No account needed.
           </Txt>

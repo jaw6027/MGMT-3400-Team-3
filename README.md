@@ -2,6 +2,23 @@
 
 A friendly, phone-first household expense app built with **Expo SDK 54, React Native, TypeScript, and Supabase**. Includes a responsive web version and a clearly labeled, persistent demo household with four roommates, six purchases, a sample receipt, and a recorded repayment.
 
+## Open the full browser preview — no setup
+
+[Open SplitCart in your browser](https://raw.githack.com/jaw6027/MGMT-3400-Team-3/main/preview/index.html), then tap **Open sample household**. No installation, Supabase project, or payment account is needed. The source repository is public; the preview is served from that repository by a static-code CDN. If the CDN displays its standard confirmation page, continue to the preview.
+
+This is a self-contained export of the actual Expo web app, including:
+
+- Separate local preview logins and signup; creating/naming a household, copying codes, joining with another account, renaming, profiles, leaving and rejoining.
+- Purchases, camera/library receipt attachment, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
+- Balances, settlement suggestions, manual repayment history, and sample bank/card payments with surcharge previews.
+- Monthly dues and bank-autopay consent, reminder preferences, and simulated phone verification (code **123456**).
+
+Use **sample/made-up information only**. Preview accounts, household codes, receipts, and changes stay in the **same browser**; they are not shared across devices. The preview is a local interaction rehearsal, not real authentication or a secure shared backend. It sends no money, emails, or SMS, and automatic payments/reminders do not execute. The real Supabase/Stripe implementation remains separate and unchanged. Sign out to test another account, or use **Household → Reset demo data** to start over.
+
+Sample logins: `alex@splitcart.demo`, `jordan@splitcart.demo`, `sam@splitcart.demo`, `riley@splitcart.demo`. All use password `splitcart-demo`. **Open sample household** signs in as Alex without typing credentials.
+
+Maintainers can rebuild the single-file preview with `npm run build:preview` and test the generated file with `npm run test:e2e:preview`. `preview/index.html` includes its JavaScript and fonts, so it also runs from an ordinary static web host. The build forces a browser-preview flag and clears live Supabase configuration. Do not replace your production build with this rehearsal build.
+
 ## Run immediately (no credentials)
 
 Requires Node 20.19+ (Node 22 LTS recommended) and npm.

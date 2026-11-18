@@ -22,6 +22,7 @@ import {
   householdName,
   pendingHousehold,
 } from "./households";
+import { browserPreviewEnabled, browserPreviewBackend } from "./browserPreview";
 type AccountUser = { id: string; name: string; email?: string };
 const empty: Data = {
   household: null,
@@ -292,7 +293,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
       value={{
         ...data,
         user,
-        demo,
+        demo: demo || browserPreviewEnabled,
         loading,
         error,
         setError,
@@ -308,6 +309,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
         profile,
         leave,
         switchMode: () => {
+          if (browserPreviewEnabled) {
+            void client().auth.signOut();
+            return;
+          }
           setData(empty);
           setUser(null);
           setHouseholdIntent(null);
@@ -320,7 +325,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
             key.startsWith("splitcart-payments-demo-v1-"),
           );
           if (keys.length) await AsyncStorage.multiRemove(keys);
-          await persist(demoData());
+          if (browserPreviewEnabled) {
+            await browserPreviewBackend.reset();
+            await client().auth.signOut();
+          } else await persist(demoData());
         },
         signOut: async () => {
           if (demo) {
