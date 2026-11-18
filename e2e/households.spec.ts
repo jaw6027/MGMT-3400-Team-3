@@ -175,7 +175,11 @@ async function backend(page: Page) {
         await respond(r.rows[0]);
         return;
       }
-      if (path.endsWith("/expenses") || path.endsWith("/repayments")) {
+      if (
+        path.endsWith("/expenses") ||
+        path.endsWith("/repayments") ||
+        path.endsWith("/cash_payments")
+      ) {
         await respond([]);
         return;
       }

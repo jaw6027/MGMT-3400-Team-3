@@ -351,7 +351,7 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
   await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Cancel monthly due to Jordan Lee",
+      name: "Remove monthly due to Jordan Lee",
       exact: true,
     })
     .click();

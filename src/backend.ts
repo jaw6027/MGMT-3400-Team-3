@@ -80,14 +80,22 @@ export async function loadData(): Promise<Data> {
       if (data.length < 500) return rows;
     }
   }
-  const [household, members, expenses, repayments] = await Promise.all([
-    c.from("households").select("*").eq("id", id).single(),
-    all("members"),
-    all("expenses", "*,shares:expense_shares(member_id,cents)"),
-    all("repayments"),
-  ]);
+  const [household, members, expenses, repayments, cashPayments] =
+    await Promise.all([
+      c.from("households").select("*").eq("id", id).single(),
+      all("members"),
+      all("expenses", "*,shares:expense_shares(member_id,cents)"),
+      all("repayments"),
+      all("cash_payments"),
+    ]);
   if (household.error) throw household.error;
-  return { household: household.data, members, expenses, repayments };
+  return {
+    household: household.data,
+    members,
+    expenses,
+    repayments,
+    cashPayments,
+  };
 }
 export async function saveLiveExpense(e: Expense) {
   const { error } = await client().rpc("save_expense", { payload: e });

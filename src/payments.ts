@@ -63,8 +63,11 @@ export type BankLinkAttempt = {
     | "verification_pending"
     | "verified"
     | "failed"
-    | "expired";
+    | "expired"
+    | "unavailable";
   canVerify: boolean;
+  canResume?: boolean;
+  arrivalDate?: string;
 };
 export type IncomingPayment = {
   id: string;
@@ -74,7 +77,13 @@ export type IncomingPayment = {
   sender: string;
 };
 export type PaymentState = {
-  security?: { verifiedUntil: number };
+  security?: {
+    verifiedUntil: number;
+    recoveryCodesRemaining?: number;
+    recoveryPending?: boolean;
+    canResumeRecovery?: boolean;
+  };
+  demoRecoveryHashes?: string[];
   bankLinks?: BankLinkAttempt[];
   incomingPayments?: IncomingPayment[];
   payoutStatus?:

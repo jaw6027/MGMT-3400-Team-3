@@ -35,11 +35,18 @@ let orders: any[] = [],
   updateRows: any[] = [],
   bankAttempts: any[] = [];
 let bankReady = true;
+let bankSessionStatus = "complete",
+  factorDeleteFails = false;
+let recoveryCodes: any[] = [];
+let factors: any[] = [];
 let intentStatus = "succeeded",
   sends = 0;
 let smsSends = 0,
   smsOptedOut = false;
 const a = {
+  recovery_pending: false,
+  recovery_started: null as string | null,
+  recovery_session: null as string | null,
   payment_updates: false,
   autopay_notices: false,
   user_id: userId,
@@ -74,11 +81,25 @@ function reset() {
   updateRows = [];
   bankAttempts = [];
   bankReady = true;
+  bankSessionStatus = "complete";
+  factorDeleteFails = false;
+  recoveryCodes = [];
+  factors = [
+    {
+      id: "b0000000-0000-4000-8000-000000000001",
+      factor_type: "totp",
+      status: "verified",
+      created_at: "2026-01-01T00:00:00Z",
+    },
+  ];
   intentStatus = "succeeded";
   sends = 0;
   smsSends = 0;
   smsOptedOut = false;
   Object.assign(a, {
+    recovery_pending: false,
+    recovery_started: null,
+    recovery_session: null,
     payment_updates: false,
     autopay_notices: false,
     phone: "",
@@ -124,23 +145,28 @@ globalThis.fetch = async (
     if (url.pathname === "/v1/checkout/sessions/cs_bank")
       return json({
         id: "cs_bank",
-        status: "complete",
-        setup_intent: {
-          id: "seti_bank",
-          status: bankReady ? "succeeded" : "requires_action",
-          payment_method: {
-            id: "pm_fixture",
-            type: "us_bank_account",
-            us_bank_account: { bank_name: "Sample bank", last4: "6789" },
-          },
-          next_action: bankReady
+        status: bankSessionStatus,
+        url: "https://checkout.stripe.com/resume-bank",
+        setup_intent:
+          bankSessionStatus === "open"
             ? null
             : {
-                verify_with_microdeposits: {
-                  hosted_verification_url: "https://verify.stripe.com/sample",
+                id: "seti_bank",
+                status: bankReady ? "succeeded" : "requires_action",
+                payment_method: {
+                  id: "pm_fixture",
+                  type: "us_bank_account",
+                  us_bank_account: { bank_name: "Sample bank", last4: "6789" },
                 },
+                next_action: bankReady
+                  ? null
+                  : {
+                      verify_with_microdeposits: {
+                        hosted_verification_url:
+                          "https://verify.stripe.com/sample",
+                      },
+                    },
               },
-        },
       });
 
     if (url.pathname === "/v1/payment_methods")
@@ -187,10 +213,22 @@ globalThis.fetch = async (
     return authenticated
       ? json({
           id: userId,
+          factors,
           email: "alex@example.test",
           email_confirmed_at: "2026-01-01",
         })
       : json({ message: "Invalid JWT", code: "bad_jwt" }, 401);
+  if (
+    url.pathname.endsWith("/factors") &&
+    url.pathname.startsWith("/auth/v1/admin/users/")
+  )
+    return json(factors);
+  if (req.method === "DELETE" && url.pathname.includes("/factors/")) {
+    if (factorDeleteFails)
+      return json({ message: "Temporary Auth failure" }, 500);
+    factors = factors.filter((f) => f.id !== url.pathname.split("/").pop());
+    return json({});
+  }
   if (url.pathname.startsWith("/auth/v1/admin/users/"))
     return json({
       id: userId,
@@ -198,6 +236,39 @@ globalThis.fetch = async (
       email_confirmed_at: "2026-01-01",
     });
   const table = url.pathname.split("/").pop();
+  if (table === "mfa_recovery_codes")
+    return rows(recoveryCodes.filter((c) => !c.used_at));
+  if (table === "replace_mfa_recovery_codes") {
+    recoveryCodes = body.hashes.map((code_hash: string) => ({
+      code_hash,
+      used_at: null,
+    }));
+    return json(null);
+  }
+  if (table === "consume_mfa_recovery_code") {
+    const code = recoveryCodes.find(
+      (c) => c.code_hash === body.hashed_code && !c.used_at,
+    );
+    if (!code) return json({ message: "Invalid recovery code" }, 400);
+    code.used_at = new Date().toISOString();
+    a.recovery_pending = true;
+    a.recovery_started = new Date().toISOString();
+    a.recovery_session = body.session_reference;
+    return json(null);
+  }
+  if (table === "cancel_due_autopay") {
+    const due = automaticDues.find(
+      (d) => d.id === body.due_uuid && d.user_id === body.account_user,
+    );
+    if (!due) return json({ message: "Schedule unavailable" }, 400);
+    Object.assign(due, {
+      automatic: false,
+      paused: false,
+      payment_method: "",
+      consent_at: null,
+    });
+    return json(null);
+  }
   if (table === "billing_accounts") {
     if (req.method !== "GET") {
       if (req.method === "PATCH") Object.assign(a, body);
@@ -764,8 +835,25 @@ Deno.test(
   },
 );
 
-const secondFactorToken = (age = 0, aal = "aal2", sub = userId) =>
-  `header.${btoa(JSON.stringify({ sub, aal, amr: [{ method: "totp", timestamp: Math.floor(Date.now() / 1000) - age }] })).replace(/=/g, "")}.test-signature`;
+const secondFactorToken = (
+  age = 0,
+  aal = "aal2",
+  sub = userId,
+  passwordAge = age,
+) =>
+  `header.${btoa(
+    JSON.stringify({
+      sub,
+      aal,
+      amr: [
+        {
+          method: "password",
+          timestamp: Math.floor(Date.now() / 1000) - passwordAge,
+        },
+        { method: "totp", timestamp: Math.floor(Date.now() / 1000) - age },
+      ],
+    }),
+  ).replace(/=/g, "")}.test-signature`;
 Deno.test(
   "financial linking requires fresh AAL2 from the authenticated account and tracks verification progress",
   async () => {
@@ -773,6 +861,7 @@ Deno.test(
     for (const bearer of [
       "user-fixture",
       secondFactorToken(301),
+      secondFactorToken(0, "aal2", userId, 301),
       secondFactorToken(0, "aal1"),
       secondFactorToken(0, "aal2", "another-user"),
     ])
@@ -919,5 +1008,205 @@ Deno.test(
     await request({ ...payment(), total: 1000 });
     assert(updateRows.some((r) => r.event === "failed"));
     Deno.env.set("APP_DUES_CENTS", "0");
+  },
+);
+
+const passwordToken = (
+  age = 0,
+  session = "d0000000-0000-4000-8000-000000000001",
+  method = "password",
+) =>
+  `header.${btoa(JSON.stringify({ sub: userId, aal: "aal1", session_id: session, amr: [{ method, timestamp: Math.floor(Date.now() / 1000) - age }] })).replace(/=/g, "")}.test-signature`;
+Deno.test(
+  "backup codes require fresh MFA, are stored hashed, and recover only with a fresh password session",
+  async () => {
+    reset();
+    assert(
+      (await request({ action: "generate_recovery_codes" })).status === 400,
+    );
+    const generated = await request(
+      { action: "generate_recovery_codes" },
+      "",
+      secondFactorToken(),
+    );
+    assert(generated.status === 200, await generated.clone().text());
+    const { codes } = await generated.json();
+    assert(codes.length === 8 && new Set(codes).size === 8);
+    assert(
+      recoveryCodes.every(
+        (c) =>
+          /^[a-f0-9]{64}$/.test(c.code_hash) && !codes.includes(c.code_hash),
+      ),
+    );
+    for (const token of [
+      passwordToken(301),
+      passwordToken(0, undefined, "recovery"),
+      secondFactorToken(),
+    ])
+      assert(
+        (await request({ action: "recover_mfa", code: codes[0] }, "", token))
+          .status === 400,
+      );
+    assert(Number(factors.length) === 1 && !a.recovery_pending);
+    const recovered = await request(
+      { action: "recover_mfa", code: codes[0] },
+      "",
+      passwordToken(),
+    );
+    assert(recovered.status === 200, await recovered.clone().text());
+    assert(a.recovery_pending && Number(factors.length) === 0);
+    assert(recoveryCodes.filter((c) => !c.used_at).length === 7);
+    assert(
+      (
+        await request(
+          { action: "recover_mfa", code: codes[0] },
+          "",
+          passwordToken(),
+        )
+      ).status === 400,
+      "Used backup code cannot be replayed",
+    );
+    assert(
+      (
+        await request(
+          { action: "setup", kind: "bank" },
+          "",
+          secondFactorToken(),
+        )
+      ).status === 400,
+      "Old authenticator token cannot unlock recovery hold",
+    );
+    // Model a replacement factor verified after recovery began.
+    a.recovery_started = new NativeDate(Date.now() - 1000).toISOString();
+    factors = [
+      {
+        id: "b0000000-0000-4000-8000-000000000002",
+        factor_type: "totp",
+        status: "verified",
+        created_at: new Date().toISOString(),
+      },
+    ];
+    const stale = await request(
+      { action: "status" },
+      "",
+      secondFactorToken(10),
+    );
+    assert(
+      (await stale.json()).security.verifiedUntil === 0 && a.recovery_pending,
+    );
+    const ready = await request({ action: "status" }, "", secondFactorToken());
+    const data = await ready.json();
+    assert(
+      data.security.verifiedUntil > 0 &&
+        !a.recovery_pending &&
+        data.security.recoveryCodesRemaining === 7,
+    );
+  },
+);
+Deno.test(
+  "cancel-autopay keeps the due and prevents the scheduler from charging it",
+  async () => {
+    reset();
+    funding = "bank";
+    const id = "60000000-0000-4000-8000-000000000001";
+    automaticDues = [
+      {
+        id,
+        user_id: userId,
+        household_id: "home",
+        recipient_id: "roommate",
+        cents: 3500,
+        due_day: 17,
+        automatic: true,
+        consent_at: "2026-01-01",
+        payment_method: "pm_fixture",
+      },
+    ];
+    const canceled = await request({ action: "cancel_autopay", id });
+    assert(canceled.status === 200, await canceled.clone().text());
+    assert(
+      automaticDues.length === 1 &&
+        !automaticDues[0].automatic &&
+        automaticDues[0].cents === 3500,
+    );
+    await request({}, "/run", "job-fixture");
+    assert(!orders.length, "Canceled autopay must not create a charge");
+    automaticDues[0].user_id = "another-user";
+    assert((await request({ action: "cancel_autopay", id })).status === 400);
+  },
+);
+
+Deno.test(
+  "interrupted authenticator reset can resume only in the bound password session",
+  async () => {
+    reset();
+    const generated = await request(
+      { action: "generate_recovery_codes" },
+      "",
+      secondFactorToken(),
+    );
+    const { codes } = await generated.json();
+    factorDeleteFails = true;
+    assert(
+      (
+        await request(
+          { action: "recover_mfa", code: codes[0] },
+          "",
+          passwordToken(),
+        )
+      ).status === 400,
+    );
+    assert(a.recovery_pending);
+    factorDeleteFails = false;
+    assert(
+      (
+        await request(
+          { action: "resume_mfa_recovery" },
+          "",
+          passwordToken(0, "another-session-reference"),
+        )
+      ).status === 400,
+    );
+    assert(
+      (await request({ action: "resume_mfa_recovery" }, "", passwordToken()))
+        .status === 200,
+    );
+    assert(Number(factors.length) === 0 && a.recovery_pending);
+  },
+);
+Deno.test(
+  "unfinished bank setup can resume securely and expired setup stays unverified",
+  async () => {
+    reset();
+    bankAttempts = [
+      {
+        id: "60000000-0000-4000-8000-000000000099",
+        user_id: userId,
+        session_id: "cs_bank",
+      },
+    ];
+    bankReady = false;
+    bankSessionStatus = "open";
+    const progress = await request({ action: "status" });
+    const data = await progress.json();
+    assert(
+      data.bankLinks[0].status === "awaiting_details" &&
+        data.bankLinks[0].canResume,
+    );
+    const resume = await request(
+      { action: "bank_verification", id: bankAttempts[0].id },
+      "",
+      secondFactorToken(),
+    );
+    assert(resume.status === 200, await resume.clone().text());
+    assert(
+      (await resume.json()).url === "https://checkout.stripe.com/resume-bank",
+    );
+    bankSessionStatus = "expired";
+    const expired = await (await request({ action: "status" })).json();
+    assert(
+      expired.bankLinks[0].status === "expired" &&
+        !expired.bankLinks[0].canResume,
+    );
   },
 );

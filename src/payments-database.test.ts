@@ -37,6 +37,12 @@ beforeAll(async () => {
       "utf8",
     ),
   );
+  await db.exec(
+    readFileSync(
+      "supabase/migrations/202611180004_cash_confirmation_recovery.sql",
+      "utf8",
+    ),
+  );
   await db.exec(`insert into auth.users values('${a}','{}'),('${b}','{}');
     insert into households(id,name,currency) values('${house}','Home','USD');
     insert into members(id,household_id,user_id,name) values('${ma}','${house}','${a}','Alex'),('${mb}','${house}','${b}','Jordan');
@@ -59,6 +65,7 @@ it("denies both authenticated and anonymous access to provider contacts and paym
       "payment_notifications",
       "bank_link_attempts",
       "payment_update_deliveries",
+      "mfa_recovery_codes",
     ])
       await expect(db.query(`select * from ${table}`)).rejects.toThrow(
         /permission denied/,
@@ -244,27 +251,113 @@ it("serializes request payment and cancellation, enforces payer and amount, and 
   await db.exec("reset role");
 });
 
-it("records cash with participant permissions and prevents clients from claiming processor confirmation", async () => {
+it("requires the cash-confirmation flow and prevents clients from claiming processor confirmation", async () => {
   await db.exec("set role authenticated");
   await db.query("select set_config('request.jwt.claim.sub',$1,false)", [a]);
-  const cash = "a0000000-0000-4000-8000-000000000001";
-  await db.query(
-    "insert into repayments(id,household_id,from_id,to_id,cents,date,recorded_by,method) values($1,$2,$3,$4,1250,'2026-11-18',$5,'cash')",
-    [cash, house, ma, mb, a],
-  );
+  for (const method of ["cash", "bank_card"])
+    await expect(
+      db.query(
+        "insert into repayments(id,household_id,from_id,to_id,cents,date,recorded_by,method) values(gen_random_uuid(),$1,$2,$3,1250,'2026-11-18',$4,$5)",
+        [house, ma, mb, a, method],
+      ),
+    ).rejects.toThrow(/row-level security/);
+  await db.exec("reset role");
+});
+
+it("credits cash exactly once only after the receiving roommate confirms and keeps disputes uncredited", async () => {
+  const id = "c0000000-0000-4000-8000-000000000001",
+    disputed = "c0000000-0000-4000-8000-000000000002";
+  const payload = {
+    id,
+    household_id: house,
+    from_id: ma,
+    to_id: mb,
+    cents: 1250,
+    date: "2026-11-18",
+  };
+  await db.exec("set role authenticated");
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)", [a]);
+  await db.query("select propose_cash_payment($1)", [JSON.stringify(payload)]);
+  await db.query("select propose_cash_payment($1)", [JSON.stringify(payload)]);
+  expect(
+    (await db.query("select * from repayments where id=$1", [id])).rows,
+  ).toHaveLength(0);
+  await expect(
+    db.query("select resolve_cash_payment($1,'confirmed')", [id]),
+  ).rejects.toThrow(/receiving roommate/);
+  await expect(
+    db.query("select propose_cash_payment($1)", [
+      JSON.stringify({ ...payload, cents: 1500 }),
+    ]),
+  ).rejects.toThrow(/cannot be changed/);
+  await db.query("select propose_cash_payment($1)", [
+    JSON.stringify({ ...payload, id: disputed }),
+  ]);
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)", [b]);
+  await db.query("select resolve_cash_payment($1,'confirmed')", [id]);
+  await db.query("select resolve_cash_payment($1,'confirmed')", [id]);
   expect(
     (
-      await db.query<{ method: string }>(
-        "select method from repayments where id=$1",
-        [cash],
+      await db.query<{ cents: number; method: string }>(
+        "select cents,method from repayments where id=$1",
+        [id],
       )
-    ).rows[0].method,
-  ).toBe("cash");
+    ).rows,
+  ).toEqual([{ cents: 1250, method: "cash" }]);
+  await db.query("select resolve_cash_payment($1,'disputed')", [disputed]);
+  expect(
+    (await db.query("select * from repayments where id=$1", [disputed])).rows,
+  ).toHaveLength(0);
   await expect(
-    db.query(
-      "insert into repayments(id,household_id,from_id,to_id,cents,date,recorded_by,method) values('a0000000-0000-4000-8000-000000000002',$1,$2,$3,1250,'2026-11-18',$4,'bank_card')",
-      [house, ma, mb, a],
-    ),
-  ).rejects.toThrow(/row-level security/);
+    db.query("select resolve_cash_payment($1,'confirmed')", [disputed]),
+  ).rejects.toThrow(/already been resolved/);
+  await db.exec("reset role");
+});
+it("consumes backup codes once with recovery hold and cancels autopay without removing the due", async () => {
+  const hashes = Array.from({ length: 8 }, (_, i) =>
+    i.toString(16).padStart(64, "0"),
+  );
+  await db.exec("set role authenticated");
+  await expect(
+    db.query("select replace_mfa_recovery_codes($1,$2)", [a, hashes]),
+  ).rejects.toThrow(/permission denied/);
+  await db.exec("reset role;set role service_role");
+  await db.query("select replace_mfa_recovery_codes($1,$2)", [a, hashes]);
+  await db.query(
+    "select consume_mfa_recovery_code($1,$2,'session-reference-1')",
+    [a, hashes[0]],
+  );
+  await expect(
+    db.query("select consume_mfa_recovery_code($1,$2,'session-reference-1')", [
+      a,
+      hashes[0],
+    ]),
+  ).rejects.toThrow(/already used/);
+  await expect(
+    db.query("select replace_mfa_recovery_codes($1,$2)", [a, hashes]),
+  ).rejects.toThrow(/unavailable/);
+  const state = (
+    await db.query<{ recovery_pending: boolean; recovery_session: string }>(
+      "select recovery_pending,recovery_session from billing_accounts where user_id=$1",
+      [a],
+    )
+  ).rows[0];
+  expect(state.recovery_pending).toBe(true);
+  expect(state.recovery_session).toBe("session-reference-1");
+  const due = "60000000-0000-4000-8000-000000000001";
+  await db.query("select cancel_due_autopay($1,$2)", [due, a]);
+  const record = (
+    await db.query<{
+      automatic: boolean;
+      consent_at: string | null;
+      cents: number;
+    }>("select automatic,consent_at,cents from payment_dues where id=$1", [due])
+  ).rows[0];
+  expect(record.automatic).toBe(false);
+  expect(record.consent_at).toBeNull();
+  expect(record.cents).toBe(7500);
+  await expect(
+    db.query("select cancel_due_autopay($1,$2)", [due, b]),
+  ).rejects.toThrow(/unavailable/);
   await db.exec("reset role");
 });

@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Linking, Switch, View } from "react-native";
+import * as Crypto from "expo-crypto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useStore } from "./store";
 import { Button, C, Chip, Field, Icon, s, Title, Txt } from "./ui";
 import { money, parseMoney, today } from "./core";
-import { uid } from "./backend";
+import { uid, client } from "./backend";
 import { paymentAction } from "./paymentApi";
 import { BankSecurityCheck } from "./BankSecurityCheck";
 import { PaymentProgress } from "./PaymentProgress";
@@ -70,6 +71,7 @@ export default function PaymentsPanel() {
     null,
   );
   const [search, setSearch] = useState("");
+  const [cancelAutopay, setCancelAutopay] = useState<string | null>(null);
   const [verificationUntil, setVerificationUntil] = useState(0);
   const [autopayNotices, setAutopayNotices] = useState(false),
     [paymentUpdates, setPaymentUpdates] = useState(false);
@@ -166,6 +168,74 @@ export default function PaymentsPanel() {
       ...(next.notifications || []),
     ].slice(0, 30),
   });
+  const demoHash = (code: string) =>
+    Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      code.toUpperCase().replace(/[\s-]/g, ""),
+    );
+  const generateCodes = async () => {
+    if (verificationUntil <= Date.now() / 1000)
+      throw new Error("Complete a fresh two-step check first.");
+    if (!st.demo) {
+      const response = await paymentAction("generate_recovery_codes");
+      await load();
+      return response.codes as string[];
+    }
+    const codes = Array.from({ length: 8 }, () =>
+      uid().replace(/-/g, "").toUpperCase().match(/.{4}/g)!.join("-"),
+    );
+    const hashes = await Promise.all(codes.map(demoHash));
+    await persist({
+      ...state,
+      demoRecoveryHashes: hashes,
+      security: {
+        ...state.security,
+        verifiedUntil: 0,
+        recoveryCodesRemaining: 8,
+      },
+    });
+    return codes;
+  };
+  const recoverAuthenticator = async (code: string, password: string) => {
+    if (st.demo) {
+      if (password !== "splitcart-demo")
+        throw new Error(
+          "Use the sample password splitcart-demo for this demonstration.",
+        );
+      const hashed = await demoHash(code),
+        hashes = state.demoRecoveryHashes || [];
+      if (!hashes.includes(hashed))
+        throw new Error("Recovery code is invalid or already used.");
+      const remaining = hashes.filter((h) => h !== hashed);
+      await persist({
+        ...state,
+        demoRecoveryHashes: remaining,
+        security: {
+          verifiedUntil: 0,
+          recoveryPending: true,
+          recoveryCodesRemaining: remaining.length,
+        },
+      });
+      setVerificationUntil(0);
+      return;
+    }
+    const user = await client().auth.getUser();
+    if (user.error || !user.data.user.email)
+      throw new Error("Sign in again before recovery.");
+    const signIn = await client().auth.signInWithPassword({
+      email: user.data.user.email,
+      password,
+    });
+    if (signIn.error) throw signIn.error;
+    try {
+      await paymentAction("recover_mfa", { code });
+      await load();
+    } catch (e) {
+      await load().catch(() => {});
+      throw e;
+    }
+    setVerificationUntil(0);
+  };
   const setup = async (kind: "bank" | "card" | "payout") => {
     if (verificationUntil <= Date.now() / 1000)
       throw new Error(
@@ -632,9 +702,28 @@ export default function PaymentsPanel() {
                     verifiedUntil={verificationUntil}
                     busy={busy}
                     onExpired={() => setVerificationUntil(0)}
+                    recoveryPending={state.security?.recoveryPending}
+                    remainingCodes={state.security?.recoveryCodesRemaining || 0}
+                    canResumeRecovery={state.security?.canResumeRecovery}
+                    onGenerateCodes={generateCodes}
+                    onRecover={recoverAuthenticator}
+                    onResumeRecovery={async () => {
+                      await paymentAction("resume_mfa_recovery");
+                      await load();
+                    }}
                     onVerified={async (until) => {
-                      if (st.demo) setVerificationUntil(until);
-                      else await load();
+                      if (st.demo) {
+                        setVerificationUntil(until);
+                        if (state.security?.recoveryPending)
+                          await persist({
+                            ...state,
+                            security: {
+                              ...state.security,
+                              verifiedUntil: 0,
+                              recoveryPending: false,
+                            },
+                          });
+                      } else await load();
                     }}
                   />
                   <Title style={{ fontSize: 22 }}>
@@ -659,17 +748,49 @@ export default function PaymentsPanel() {
                             failed:
                               "Bank verification failed · Link your bank again",
                             expired: "Bank setup expired · Start a new link",
+                            unavailable:
+                              "Bank progress temporarily unavailable",
                           }[link.status]
                         }
                       </Txt>
-                      {link.canVerify && (
+                      <Txt>
+                        {link.status === "verification_pending"
+                          ? "Check your bank statement for the provider’s test deposits. Complete verification on its secure page; don’t try a payment while verification is pending."
+                          : link.status === "failed" ||
+                              link.status === "expired"
+                            ? "Restart bank linking to verify the account again. Existing payments and dues are kept."
+                            : link.status === "unavailable"
+                              ? "Refresh status or check your connection. An unavailable status does not mean the bank is verified."
+                              : link.status === "awaiting_details"
+                                ? "Continue the secure bank setup where you left off."
+                                : "Bank ownership verification is complete."}
+                      </Txt>
+                      {!!link.arrivalDate && (
+                        <Txt>
+                          Provider’s expected deposit date: {link.arrivalDate}{" "}
+                          (UTC)
+                        </Txt>
+                      )}
+                      {(link.status === "failed" ||
+                        link.status === "expired") && (
+                        <Button
+                          secondary
+                          small
+                          label="Restart bank verification"
+                          disabled={busy}
+                          onPress={() => void run(() => setup("bank"))}
+                        />
+                      )}
+                      {(link.canVerify || link.canResume) && (
                         <Button
                           secondary
                           small
                           label={
                             st.demo
                               ? "Complete sample bank verification"
-                              : "Complete bank verification"
+                              : link.canResume
+                                ? "Continue bank setup"
+                                : "Complete bank verification"
                           }
                           disabled={busy}
                           onPress={() =>
@@ -1208,6 +1329,82 @@ export default function PaymentsPanel() {
                           );
                         }}
                       />
+                      {d.automatic && (
+                        <Button
+                          secondary
+                          small
+                          label={`Cancel autopay to ${recipientName(d.recipient)}`}
+                          disabled={busy}
+                          onPress={() => setCancelAutopay(d.id)}
+                        />
+                      )}
+                      {cancelAutopay === d.id && (
+                        <View
+                          style={{
+                            gap: 12,
+                            padding: 14,
+                            backgroundColor: C.sage,
+                            borderRadius: 12,
+                          }}
+                        >
+                          <Txt style={{ fontFamily: "DMBold" }}>
+                            Cancel future automatic payments of {fmt(d.cents)}{" "}
+                            to {recipientName(d.recipient)}?
+                          </Txt>
+                          <Txt>
+                            The monthly due stays available for manual payment.
+                            Canceling does not erase money owed or reverse a
+                            payment already processing.
+                          </Txt>
+                          <Button
+                            label={`Confirm cancel autopay to ${recipientName(d.recipient)}`}
+                            disabled={busy}
+                            onPress={() =>
+                              void run(async () => {
+                                if (st.demo)
+                                  await persist(
+                                    notice(
+                                      {
+                                        ...state,
+                                        dues: state.dues.map((x) =>
+                                          x.id === d.id
+                                            ? {
+                                                ...x,
+                                                automatic: false,
+                                                consent: false,
+                                                method: "",
+                                                paused: false,
+                                              }
+                                            : x,
+                                        ),
+                                      },
+                                      "Autopay canceled. The due remains for manual payment.",
+                                    ),
+                                  );
+                                else {
+                                  await paymentAction("cancel_autopay", {
+                                    id: d.id,
+                                  });
+                                  await load();
+                                }
+                                setEditingDue(null);
+                                setAuthorize(false);
+                                setAutomatic(false);
+                                setCancelAutopay(null);
+                                setMessage(
+                                  "Autopay canceled. Future automatic charges are off; your due remains for manual payment. Payments already processing may still complete.",
+                                );
+                              })
+                            }
+                          />
+                          <Button
+                            secondary
+                            label="Keep autopay enabled"
+                            disabled={busy}
+                            onPress={() => setCancelAutopay(null)}
+                          />
+                        </View>
+                      )}
                       {!d.paused && (
                         <Button
                           secondary
@@ -1247,7 +1444,7 @@ export default function PaymentsPanel() {
                       <Button
                         secondary
                         small
-                        label={`Cancel monthly due to ${recipientName(d.recipient)}`}
+                        label={`Remove monthly due to ${recipientName(d.recipient)}`}
                         disabled={busy}
                         onPress={() =>
                           void run(async () => {

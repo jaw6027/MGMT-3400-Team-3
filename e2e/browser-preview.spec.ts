@@ -316,7 +316,7 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
   await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Cancel monthly due to Jordan Lee",
+      name: "Remove monthly due to Jordan Lee",
       exact: true,
     })
     .click();
@@ -601,27 +601,82 @@ test("bank linking requires two-step verification and bank ownership completion 
   await button("Review payment").click();
   await expect(button("Confirm demo payment")).toBeVisible();
 });
-test("cash repayments are explicitly marked in household history and update balances", async ({
+test("cash requires receiver confirmation before changing balances", async ({
   page,
 }) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
   await page.getByRole("tab", { name: "Balances", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Record repayment", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  const before = await page.evaluate(
+    () =>
+      JSON.parse(localStorage.getItem("splitcart-browser-preview-v1")!)
+        .repayments.length,
+  );
+  await button("Record repayment").click();
+  await button("Cash").click();
   await page.getByLabel("Amount (USD)", { exact: true }).fill("12.50");
   await expect(
-    page.getByText(/Only record cash that has already been handed over/),
+    page.getByText(/Your roommate must confirm receipt before balances change/),
   ).toBeVisible();
+  await button("Send cash for confirmation").click();
+  await expect(page.getByText(/Awaiting receiver confirmation/)).toBeVisible();
+  await expect(button("Confirm cash received from Alex Morgan")).toHaveCount(0);
+  let db = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("splitcart-browser-preview-v1")!),
+  );
+  expect(db.repayments).toHaveLength(before);
+  expect(db.cashPayments[0].status).toBe("pending");
+  await signout(page);
   await page
-    .getByRole("button", { name: "Confirm cash payment", exact: true })
-    .click();
-  await expect(page.getByText(/Cash payment ·/)).toBeVisible();
+    .getByLabel("Email address", { exact: true })
+    .fill("jordan@splitcart.demo");
+  await page.getByLabel("Password", { exact: true }).fill("splitcart-demo");
+  await button("Log in").click();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Confirm cash received from Alex Morgan").click();
+  await expect(
+    page.getByText(/Receipt confirmed · Balance updated/),
+  ).toBeVisible();
+  db = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("splitcart-browser-preview-v1")!),
+  );
+  expect(db.repayments).toHaveLength(before + 1);
+  expect(db.repayments[0].method).toBe("cash");
+  expect(db.repayments[0].cents).toBe(1250);
+  expect(db.cashPayments[0].status).toBe("confirmed");
+  await page.reload();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await expect(button("Confirm cash received from Alex Morgan")).toHaveCount(0);
+});
+test("a receiving roommate can dispute cash without changing the ledger", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Record repayment").click();
+  await button("Cash").click();
+  await page.getByLabel("Amount (USD)", { exact: true }).fill("9");
+  await button("Send cash for confirmation").click();
+  const before = await page.evaluate(
+    () =>
+      JSON.parse(localStorage.getItem("splitcart-browser-preview-v1")!)
+        .repayments.length,
+  );
+  await signout(page);
+  await page
+    .getByLabel("Email address", { exact: true })
+    .fill("jordan@splitcart.demo");
+  await page.getByLabel("Password", { exact: true }).fill("splitcart-demo");
+  await button("Log in").click();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Dispute cash from Alex Morgan").click();
+  await expect(page.getByText(/Disputed · Balance unchanged/)).toBeVisible();
   const db = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("splitcart-browser-preview-v1")!),
   );
-  expect(db.repayments[0].method).toBe("cash");
-  expect(db.repayments[0].cents).toBe(1250);
+  expect(db.repayments).toHaveLength(before);
+  expect(db.cashPayments[0].status).toBe("disputed");
 });
 test("advance autopay notices and payment updates persist with chosen delivery channels", async ({
   page,
@@ -649,4 +704,154 @@ test("advance autopay notices and payment updates persist with chosen delivery c
     "Email payment reminders",
   ])
     await expect(page.getByRole("switch", { name, exact: true })).toBeChecked();
+});
+
+test("canceling autopay keeps the due for manual payment", async ({ page }) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await verifySampleSecurity(page);
+  await button("Add sample bank").click();
+  await button("Complete sample bank verification").click();
+  await button("Autopay").click();
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("35");
+  await page
+    .getByLabel("Monthly due day (1–28, UTC)", { exact: true })
+    .fill("8");
+  await page
+    .getByRole("switch", {
+      name: "Automatically pay this monthly due",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("switch", {
+      name: "I authorize the selected bank account to be charged this amount each month on the due day until I cancel",
+      exact: true,
+    })
+    .click();
+  await button("Save monthly due").click();
+  await button("Cancel autopay to Jordan Lee").click();
+  await expect(
+    page.getByText(/Canceling does not erase money owed/),
+  ).toBeVisible();
+  await button("Confirm cancel autopay to Jordan Lee").click();
+  await expect(
+    page.getByText("Day 8 each month (UTC) · Reminder only · Demo", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const dues = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) =>
+      k.startsWith("splitcart-payments-demo-v1-"),
+    )!;
+    return JSON.parse(localStorage.getItem(key)!).dues;
+  });
+  expect(dues).toHaveLength(1);
+  expect(dues[0].cents).toBe(3500);
+  expect(dues[0].automatic).toBe(false);
+  expect(dues[0].consent).toBe(false);
+  await expect(page.getByText(/Next automatic charge:/)).toHaveCount(0);
+});
+test("sample backup codes are shown once and cannot be reused for recovery", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await verifySampleSecurity(page);
+  await button("Create backup codes").click();
+  const codes = (
+    await page
+      .getByLabel("Backup codes — save privately", { exact: true })
+      .inputValue()
+  ).split("\n");
+  expect(codes).toHaveLength(8);
+  expect(new Set(codes).size).toBe(8);
+  await button("I have saved my backup codes").click();
+  await expect(
+    page.getByLabel("Backup codes — save privately", { exact: true }),
+  ).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Lost your authenticator?").click();
+  await page.getByLabel("Account password for recovery").fill("splitcart-demo");
+  await page.getByLabel("One-time backup code").fill(codes[0]);
+  await button("Recover authenticator access").click();
+  await expect(page.getByText(/Recovery is in progress/)).toBeVisible();
+  await expect(button("Add sample bank")).toBeDisabled();
+  await verifySampleSecurity(page);
+  await expect(button("Add sample bank")).toBeEnabled();
+  await page.reload();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Lost your authenticator?").click();
+  await page.getByLabel("Account password for recovery").fill("splitcart-demo");
+  await page.getByLabel("One-time backup code").fill(codes[0]);
+  await button("Recover authenticator access").click();
+  await expect(
+    page.getByText("Recovery code is invalid or already used.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(button("Add sample bank")).toBeDisabled();
+});
+
+test("expired bank verification offers a restart without marking the bank verified", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await page.evaluate(() => {
+    const db = JSON.parse(
+      localStorage.getItem("splitcart-browser-preview-v1")!,
+    );
+    const member = db.members.find((m: any) => m.name === "Alex Morgan");
+    const key = `splitcart-payments-demo-v1-${member.user_id}-${member.household_id}`;
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        phoneVerified: false,
+        methods: [],
+        payoutReady: false,
+        dues: [],
+        payments: [],
+        appDues: 500,
+        available: true,
+        reminder: {
+          email: false,
+          sms: false,
+          phone: "",
+          days: 3,
+          consent: false,
+        },
+        bankLinks: [
+          {
+            id: "sample-expired",
+            label: "Sample bank",
+            status: "expired",
+            canVerify: false,
+            canResume: false,
+          },
+        ],
+      }),
+    );
+  });
+  await button("Refresh payment status").click();
+  await expect(
+    page.getByText("Bank setup expired · Start a new link", { exact: true }),
+  ).toBeVisible();
+  await verifySampleSecurity(page);
+  await button("Restart bank verification").click();
+  await expect(
+    page.getByText("Bank ownership verification pending", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Bank ownership verified · Ready to pay", { exact: true }),
+  ).toHaveCount(0);
 });

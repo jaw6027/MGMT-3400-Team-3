@@ -8,6 +8,7 @@ import {
   Household,
   Member,
   Repayment,
+  CashPayment,
   canEdit,
   validateExpense,
   validateImage,
@@ -31,6 +32,7 @@ type User = {
 };
 type PreviewMember = Member & { household_id: string };
 type Database = {
+  cashPayments?: CashPayment[];
   users: User[];
   households: Household[];
   members: PreviewMember[];
@@ -236,6 +238,92 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
           url.searchParams.get(name)?.replace(/^eq\./, "");
         if (path.startsWith("/rest/v1/rpc/")) {
           const name = path.split("/").pop();
+          if (name === "propose_cash_payment") {
+            const r = payload.payload as Repayment;
+            requireHouse(db, user.id, r.household_id);
+            if (
+              !active ||
+              active.id !== r.from_id ||
+              r.from_id === r.to_id ||
+              !Number.isSafeInteger(r.cents) ||
+              r.cents <= 0 ||
+              r.cents > 100000000 ||
+              !validDate(r.date) ||
+              !db.members.some(
+                (m) =>
+                  m.id === r.to_id &&
+                  m.household_id === active.household_id &&
+                  !m.left_at,
+              )
+            )
+              throw new Error(
+                "Only the sender can record cash for an active roommate.",
+              );
+            const old = (db.cashPayments || []).find((p) => p.id === r.id);
+            if (old) {
+              if (
+                old.from_id !== r.from_id ||
+                old.to_id !== r.to_id ||
+                old.cents !== r.cents ||
+                old.date !== r.date
+              )
+                throw new Error("Cash entry cannot be changed.");
+              return json(old.id);
+            }
+            if (db.repayments.some((p) => p.id === r.id))
+              throw new Error("Payment reference already used.");
+            db.cashPayments = [
+              {
+                ...r,
+                method: "cash",
+                status: "pending",
+                proposed_by: user.id,
+                created_at: new Date().toISOString(),
+              },
+              ...(db.cashPayments || []),
+            ];
+            await save(db);
+            return json(r.id);
+          }
+          if (name === "resolve_cash_payment") {
+            const cash = (db.cashPayments || []).find(
+              (p) => p.id === payload.cash_id,
+            );
+            if (
+              !active ||
+              !cash ||
+              cash.to_id !== active.id ||
+              cash.household_id !== active.household_id
+            )
+              throw new Error(
+                "Only the receiving roommate can confirm or dispute cash.",
+              );
+            const decision = payload.decision;
+            if (!["confirmed", "disputed"].includes(decision))
+              throw new Error("Choose confirm or dispute.");
+            if (cash.status === decision) return json(null);
+            if (cash.status !== "pending")
+              throw new Error("Cash entry already resolved.");
+            if (decision === "confirmed") {
+              if (db.repayments.some((p) => p.id === cash.id))
+                throw new Error("Payment reference already used.");
+              db.repayments.unshift({
+                id: cash.id,
+                household_id: cash.household_id,
+                from_id: cash.from_id,
+                to_id: cash.to_id,
+                cents: cash.cents,
+                date: cash.date,
+                recorded_by: cash.proposed_by,
+                method: "cash",
+              });
+            }
+            cash.status = decision;
+            cash.resolved_by = user.id;
+            cash.resolved_at = new Date().toISOString();
+            await save(db);
+            return json(null);
+          }
           if (name === "complete_household_setup") {
             if (active) return json(active.household_id);
             let house: Household | undefined;
@@ -367,6 +455,8 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
           const table = path.split("/").pop();
           if (method === "POST" && table === "repayments") {
             const r = payload as Repayment;
+            if (r.method === "cash")
+              throw new Error("Cash requires receiver confirmation.");
             requireHouse(db, user.id, r.household_id);
             if (
               !Number.isSafeInteger(r.cents) ||
@@ -426,6 +516,13 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               (e) =>
                 e.household_id === active?.household_id &&
                 e.household_id === filter("household_id"),
+            );
+          else if (table === "cash_payments")
+            rows = (db.cashPayments || []).filter(
+              (p) =>
+                p.household_id === active?.household_id &&
+                p.household_id === filter("household_id") &&
+                (p.from_id === active?.id || p.to_id === active?.id),
             );
           else if (table === "repayments")
             rows = db.repayments.filter(

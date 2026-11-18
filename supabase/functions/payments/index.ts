@@ -36,18 +36,76 @@ function result<T>({ data, error }: { data: T; error: any }): T {
   if (error) throw new Error("Payment data could not be saved. Please retry.");
   return data;
 }
-function secondFactorExpiry(token: string, userId: string) {
+function verifiedClaims(token: string, userId: string): any {
   try {
     const raw = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     const claims = JSON.parse(
       atob(raw.padEnd(Math.ceil(raw.length / 4) * 4, "=")),
     );
-    return claims.sub === userId
-      ? recentSecondFactor(claims, Math.floor(Date.now() / 1000))
-      : 0;
+    return claims.sub === userId ? claims : null;
   } catch {
-    return 0;
+    return null;
   }
+}
+function recentPasswordExpiry(claims: any) {
+  const now = Date.now() / 1000;
+  const stamps = (claims?.amr || [])
+    .filter((m: any) => m.method === "password" && Number.isFinite(m.timestamp))
+    .map((m: any) => m.timestamp);
+  const latest = Math.max(0, ...stamps);
+  return latest <= now && now - latest < 300 ? latest + 300 : 0;
+}
+function secondFactorExpiry(token: string, userId: string) {
+  const claims = verifiedClaims(token, userId),
+    passwordUntil = recentPasswordExpiry(claims),
+    factorUntil = recentSecondFactor(claims, Math.floor(Date.now() / 1000));
+  return passwordUntil && factorUntil
+    ? Math.min(passwordUntil, factorUntil)
+    : 0;
+}
+function freshPassword(claims: any) {
+  return (
+    !!claims?.session_id &&
+    claims.aal === "aal1" &&
+    recentPasswordExpiry(claims) > 0
+  );
+}
+async function recoveryHash(userId: string, raw: string) {
+  const code = raw.toUpperCase().replace(/[\s-]/g, "");
+  check(/^[A-F0-9]{32}$/.test(code), "Enter a complete recovery code.");
+  return Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(`${userId}:${code}`),
+      ),
+    ),
+  )
+    .map((v) => v.toString(16).padStart(2, "0"))
+    .join("");
+}
+async function finishRecoveryReset(userId: string) {
+  const factors = await db.auth.admin.mfa.listFactors({ userId });
+  check(
+    !factors.error && factors.data,
+    "Authenticator recovery could not finish. Use Resume recovery to retry.",
+  );
+  for (const factor of factors.data.factors) {
+    const removed = await db.auth.admin.mfa.deleteFactor({
+      userId,
+      id: factor.id,
+    });
+    check(
+      !removed.error,
+      "Authenticator recovery could not finish. Use Resume recovery to retry.",
+    );
+  }
+  const current = await account(userId);
+  await notify(
+    userId,
+    "Authenticator recovery started. Financial linking remains locked until a replacement authenticator is verified.",
+    `recovery-start-${current.recovery_started}`,
+  );
 }
 async function bankVerified(customerId: string, methodId: string) {
   for await (const setup of stripe.setupIntents.list({
@@ -91,8 +149,21 @@ async function bankAttempt(row: any) {
     id: row.id,
     label: pm ? methodLabel(pm) : "Linked bank",
     status: state,
-    canVerify: !!url,
-    url,
+    canVerify: state === "verification_pending" && !!url,
+    canResume: state === "awaiting_details" && !!session.url,
+    arrivalDate: setup?.next_action?.verify_with_microdeposits?.arrival_date
+      ? new Date(
+          setup.next_action.verify_with_microdeposits.arrival_date * 1000,
+        )
+          .toISOString()
+          .slice(0, 10)
+      : undefined,
+    url:
+      state === "verification_pending"
+        ? url
+        : state === "awaiting_details"
+          ? session.url
+          : null,
   };
 }
 async function account(userId: string) {
@@ -533,8 +604,18 @@ async function status(user: any) {
         .limit(10),
     );
     for (const row of attempts || []) {
-      const { url, ...progress } = await bankAttempt(row);
-      bankLinks.push(progress);
+      try {
+        const { url, ...progress } = await bankAttempt(row);
+        bankLinks.push(progress);
+      } catch {
+        bankLinks.push({
+          id: row.id,
+          label: "Linked bank",
+          status: "unavailable",
+          canVerify: false,
+          canResume: false,
+        });
+      }
     }
     // Polling also repairs a lost/delayed webhook without trusting browser redirects.
     const pending = result(
@@ -1185,9 +1266,124 @@ export async function handler(req: Request) {
       input = await req.json(),
       a = await account(user.id);
     const action = input.action;
-    const verifiedUntil = secondFactorExpiry(token, user.id);
-    if (action === "status")
-      return send({ ...(await status(user)), security: { verifiedUntil } });
+    let verifiedUntil = secondFactorExpiry(token, user.id);
+    const claims = verifiedClaims(token, user.id);
+    if (a.recovery_pending) {
+      const lastTotp = Math.max(
+        0,
+        ...(claims?.amr || [])
+          .filter((m: any) => m.method === "totp")
+          .map((m: any) => m.timestamp),
+      );
+      if (
+        verifiedUntil > 0 &&
+        lastTotp > Math.floor(Date.parse(a.recovery_started) / 1000) &&
+        user.factors?.some(
+          (f) =>
+            f.status === "verified" &&
+            Date.parse(f.created_at) >= Date.parse(a.recovery_started),
+        )
+      ) {
+        result(
+          await db
+            .from("billing_accounts")
+            .update({ recovery_pending: false, recovery_session: null })
+            .eq("user_id", user.id),
+        );
+        a.recovery_pending = false;
+        await notify(
+          user.id,
+          "Replacement authenticator verified. Financial linking is available after a fresh two-step check.",
+          `recovery-complete-${a.recovery_started}`,
+        );
+      } else verifiedUntil = 0;
+    }
+    if (action === "generate_recovery_codes") {
+      check(
+        user.email_confirmed_at && verifiedUntil > 0 && !a.recovery_pending,
+        "Complete a fresh two-step check before creating backup codes.",
+      );
+      const codes = Array.from({ length: 8 }, () =>
+        Array.from(crypto.getRandomValues(new Uint8Array(16)))
+          .map((v) => v.toString(16).padStart(2, "0"))
+          .join("")
+          .toUpperCase()
+          .match(/.{4}/g)!
+          .join("-"),
+      );
+      const hashes = await Promise.all(
+        codes.map((code) => recoveryHash(user.id, code)),
+      );
+      result(
+        await db.rpc("replace_mfa_recovery_codes", {
+          account_user: user.id,
+          hashes,
+        }),
+      );
+      await notify(
+        user.id,
+        "New authenticator backup codes were created. Previous backup codes no longer work.",
+      );
+      return send({ codes });
+    }
+    if (action === "recover_mfa" || action === "resume_mfa_recovery") {
+      check(
+        user.email_confirmed_at && freshPassword(claims),
+        "Sign in again with your password before using authenticator recovery.",
+      );
+      if (action === "recover_mfa") {
+        check(typeof input.code === "string", "Enter a recovery code.");
+        const hashed_code = await recoveryHash(user.id, input.code);
+        const consumed = await db.rpc("consume_mfa_recovery_code", {
+          account_user: user.id,
+          hashed_code,
+          session_reference: claims.session_id,
+        });
+        check(!consumed.error, "Recovery code is invalid or already used.");
+      } else
+        check(
+          a.recovery_pending && a.recovery_session === claims.session_id,
+          "Resume recovery from the same password-verified session, or use another unused recovery code.",
+        );
+      await finishRecoveryReset(user.id);
+      return send({ ok: true });
+    }
+    if (action === "status") {
+      const remaining = result(
+        await db
+          .from("mfa_recovery_codes")
+          .select("code_hash")
+          .eq("user_id", user.id)
+          .is("used_at", null),
+      );
+      return send({
+        ...(await status(user)),
+        security: {
+          verifiedUntil,
+          recoveryCodesRemaining: remaining?.length || 0,
+          recoveryPending: !!a.recovery_pending,
+          canResumeRecovery: !!(
+            a.recovery_pending &&
+            freshPassword(claims) &&
+            a.recovery_session === claims.session_id
+          ),
+        },
+      });
+    }
+    if (action === "cancel_autopay") {
+      check(uuid(input.id), "Choose a scheduled due.");
+      result(
+        await db.rpc("cancel_due_autopay", {
+          due_uuid: input.id,
+          account_user: user.id,
+        }),
+      );
+      await notify(
+        user.id,
+        "Autopay was canceled. The monthly due remains for manual payment; a bank payment already processing may still complete.",
+      );
+      return send({ ok: true });
+    }
     if (["setup", "payout_setup", "bank_verification"].includes(action))
       check(
         user.email_confirmed_at && verifiedUntil > 0,

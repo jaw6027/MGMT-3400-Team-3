@@ -66,6 +66,7 @@ import {
 import Illustration from "./src/Illustration";
 import { AccessibilityProvider, AccessibilitySettings } from "./src/ui";
 import PaymentsPanel from "./src/PaymentsPanel";
+import { CashPayments } from "./src/CashPayments";
 import {
   SecurityProvider,
   SecuritySettings,
@@ -1012,9 +1013,9 @@ function Main() {
       {repayOpen && (
         <RepayModal
           onClose={() => setRepayOpen(false)}
-          onSaved={() => {
+          onSaved={(message) => {
             setRepayOpen(false);
-            notify("Repayment recorded. Your balances are up to date.");
+            notify(message);
           }}
         />
       )}
@@ -1385,6 +1386,7 @@ function Balances({ onRepay }: { onRepay: () => void }) {
         <Button label="Record repayment" icon="Plus" onPress={onRepay} />
       </View>
       <PaymentsPanel />
+      <CashPayments />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
         {st.members.map((m, i) => (
           <View
@@ -2087,7 +2089,7 @@ function RepayModal({
   onSaved,
 }: {
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (message: string) => void;
 }) {
   const st = useStore();
   const self = st.members.find((m) => m.user_id === st.user?.id)!;
@@ -2121,7 +2123,7 @@ function RepayModal({
         throw new Error("You can only record repayments you sent or received.");
       if (!validDate(date))
         throw new Error("Use a valid date in YYYY-MM-DD format.");
-      await st.repay({
+      await (paymentMethod === "cash" ? st.proposeCash : st.repay)({
         id,
         household_id: st.household!.id,
         from_id: from,
@@ -2131,7 +2133,11 @@ function RepayModal({
         recorded_by: st.user!.id,
         method: paymentMethod,
       });
-      onSaved();
+      onSaved(
+        paymentMethod === "cash"
+          ? "Cash entry sent. Your roommate must confirm receipt before balances change."
+          : "Repayment recorded. Your balances are up to date.",
+      );
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -2167,7 +2173,15 @@ function RepayModal({
         <Chip
           label="Cash"
           active={paymentMethod === "cash"}
-          onPress={() => setPaymentMethod("cash")}
+          onPress={() => {
+            setPaymentMethod("cash");
+            setFrom(self.id);
+            if (to === self.id)
+              setTo(
+                st.members.find((m) => m.id !== self.id && !m.left_at)?.id ||
+                  "",
+              );
+          }}
         />
         <Chip
           label="Other outside payment"
@@ -2177,31 +2191,37 @@ function RepayModal({
       </View>
       {paymentMethod === "cash" && (
         <Txt>
-          Only record cash that has already been handed over. Confirming updates
-          your household balance; SplitCart does not transfer money.
+          Record only cash you handed over. Your roommate must confirm receipt
+          before balances change. SplitCart does not transfer money.
         </Txt>
       )}
       <Txt style={s.label}>WHO SENT IT?</Txt>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {st.members.map((m) => (
-          <Chip
-            key={m.id}
-            label={m.name.split(" ")[0] + (m.left_at ? " (former)" : "")}
-            active={from === m.id}
-            onPress={() => setFrom(m.id)}
-          />
-        ))}
+        {st.members
+          .filter((m) => paymentMethod !== "cash" || m.id === self.id)
+          .map((m) => (
+            <Chip
+              key={m.id}
+              label={m.name.split(" ")[0] + (m.left_at ? " (former)" : "")}
+              active={from === m.id}
+              onPress={() => setFrom(m.id)}
+            />
+          ))}
       </View>
       <Txt style={s.label}>WHO RECEIVED IT?</Txt>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {st.members.map((m) => (
-          <Chip
-            key={m.id}
-            label={m.name.split(" ")[0] + (m.left_at ? " (former)" : "")}
-            active={to === m.id}
-            onPress={() => setTo(m.id)}
-          />
-        ))}
+        {st.members
+          .filter(
+            (m) => paymentMethod !== "cash" || (m.id !== self.id && !m.left_at),
+          )
+          .map((m) => (
+            <Chip
+              key={m.id}
+              label={m.name.split(" ")[0] + (m.left_at ? " (former)" : "")}
+              active={to === m.id}
+              onPress={() => setTo(m.id)}
+            />
+          ))}
       </View>
       <Field
         label={`Amount (${st.household?.currency})`}
@@ -2224,7 +2244,7 @@ function RepayModal({
       <Button
         label={
           paymentMethod === "cash"
-            ? "Confirm cash payment"
+            ? "Send cash for confirmation"
             : "Confirm recorded payment"
         }
         icon="Check"

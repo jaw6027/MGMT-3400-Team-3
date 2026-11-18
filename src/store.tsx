@@ -7,7 +7,15 @@ import React, {
   useState,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Data, Expense, Repayment, validateExpense, canEdit } from "./core";
+import {
+  Data,
+  Expense,
+  Repayment,
+  CashPayment,
+  validateExpense,
+  canEdit,
+  validDate,
+} from "./core";
 import { demoData, DEMO_USER } from "./demo";
 import {
   supabase,
@@ -246,6 +254,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
     }
   };
   const repay = async (r: Repayment) => {
+    if (r.method === "cash")
+      throw new Error(
+        "Cash payments need the receiving roommate’s confirmation.",
+      );
     if (!Number.isSafeInteger(r.cents) || r.cents <= 0 || r.from_id === r.to_id)
       throw new Error("Choose two roommates and a positive amount.");
     if (demo) {
@@ -259,6 +271,104 @@ export function Provider({ children }: { children: React.ReactNode }) {
         .from("repayments")
         .insert({ ...r, recorded_by: user!.id });
       if (error && error.code !== "23505") throw error;
+      await refresh();
+    }
+  };
+  const proposeCash = async (r: Repayment) => {
+    const self = dataRef.current.members.find((m) => m.user_id === user?.id);
+    if (
+      !self ||
+      r.household_id !== dataRef.current.household?.id ||
+      !validDate(r.date) ||
+      r.from_id !== self.id ||
+      r.from_id === r.to_id ||
+      !Number.isSafeInteger(r.cents) ||
+      r.cents <= 0 ||
+      r.cents > 100000000 ||
+      !dataRef.current.members.some((m) => m.id === r.to_id && !m.left_at)
+    )
+      throw new Error("Record cash you handed to an active roommate.");
+    if (demo) {
+      const old = (dataRef.current.cashPayments || []).find(
+        (p) => p.id === r.id,
+      );
+      if (old) {
+        if (
+          old.from_id !== r.from_id ||
+          old.to_id !== r.to_id ||
+          old.cents !== r.cents ||
+          old.date !== r.date
+        )
+          throw new Error("Cash entry cannot be changed.");
+        return;
+      }
+      const cash: CashPayment = {
+        ...r,
+        method: "cash",
+        status: "pending",
+        proposed_by: user!.id,
+        created_at: new Date().toISOString(),
+      };
+      await persist({
+        ...dataRef.current,
+        cashPayments: [cash, ...(dataRef.current.cashPayments || [])],
+      });
+    } else {
+      const { error } = await client().rpc("propose_cash_payment", {
+        payload: r,
+      });
+      if (error) throw error;
+      await refresh();
+    }
+  };
+  const resolveCash = async (
+    id: string,
+    decision: "confirmed" | "disputed",
+  ) => {
+    if (demo) {
+      const d = dataRef.current,
+        p = (d.cashPayments || []).find((p) => p.id === id),
+        self = d.members.find((m) => m.user_id === user?.id && !m.left_at);
+      if (!p || p.to_id !== self?.id)
+        throw new Error("Only the receiver can confirm or dispute cash.");
+      if (p.status === decision) return;
+      if (p.status !== "pending")
+        throw new Error("Cash entry already resolved.");
+      await persist({
+        ...d,
+        cashPayments: (d.cashPayments || []).map((x) =>
+          x.id === id
+            ? {
+                ...x,
+                status: decision,
+                resolved_by: user!.id,
+                resolved_at: new Date().toISOString(),
+              }
+            : x,
+        ),
+        repayments:
+          decision === "confirmed"
+            ? [
+                {
+                  id: p.id,
+                  household_id: p.household_id,
+                  from_id: p.from_id,
+                  to_id: p.to_id,
+                  cents: p.cents,
+                  date: p.date,
+                  recorded_by: p.proposed_by,
+                  method: "cash",
+                },
+                ...d.repayments,
+              ]
+            : d.repayments,
+      });
+    } else {
+      const { error } = await client().rpc("resolve_cash_payment", {
+        cash_id: id,
+        decision,
+      });
+      if (error) throw error;
       await refresh();
     }
   };
@@ -355,6 +465,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
         saveExpense,
         deleteExpense,
         repay,
+        proposeCash,
+        resolveCash,
         householdAction: household,
         householdIntent,
         householdWelcome,
@@ -410,6 +522,11 @@ export function useStore(): Data & {
   saveExpense: (e: Expense) => Promise<void>;
   deleteExpense: (e: Expense) => Promise<void>;
   repay: (r: Repayment) => Promise<void>;
+  proposeCash: (r: Repayment) => Promise<void>;
+  resolveCash: (
+    id: string,
+    decision: "confirmed" | "disputed",
+  ) => Promise<void>;
   householdAction: (n: string, c: string, curr: string) => Promise<void>;
   householdIntent: HouseholdIntent | null;
   householdWelcome: boolean;

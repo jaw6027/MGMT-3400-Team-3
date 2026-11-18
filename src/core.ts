@@ -35,7 +35,15 @@ export type Household = {
   currency: string;
   invite_code: string;
 };
+export type CashPayment = Repayment & {
+  status: "pending" | "confirmed" | "disputed";
+  proposed_by: string;
+  resolved_by?: string;
+  resolved_at?: string;
+  created_at: string;
+};
 export type Data = {
+  cashPayments?: CashPayment[];
   household: Household | null;
   members: Member[];
   expenses: Expense[];
