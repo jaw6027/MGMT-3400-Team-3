@@ -6,6 +6,8 @@ import { Button, C, Chip, Field, Icon, s, Title, Txt } from "./ui";
 import { money, parseMoney, today } from "./core";
 import { uid } from "./backend";
 import { paymentAction } from "./paymentApi";
+import { BankSecurityCheck } from "./BankSecurityCheck";
+import { PaymentProgress } from "./PaymentProgress";
 import { PaymentDashboard } from "./PaymentDashboard";
 import { PaymentRequests } from "./PaymentRequests";
 import {
@@ -68,6 +70,9 @@ export default function PaymentsPanel() {
     null,
   );
   const [search, setSearch] = useState("");
+  const [verificationUntil, setVerificationUntil] = useState(0);
+  const [autopayNotices, setAutopayNotices] = useState(false),
+    [paymentUpdates, setPaymentUpdates] = useState(false);
   const [state, setState] = useState<PaymentState>(emptyPayments);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -115,6 +120,9 @@ export default function PaymentsPanel() {
       : st.members.find((m) => m.id === id)?.name || "Former roommate";
   const apply = (next: PaymentState & { phoneVerified?: boolean }) => {
     setState(next);
+    setVerificationUntil(next.security?.verifiedUntil || 0);
+    setAutopayNotices(!!next.reminder.autopayNotices);
+    setPaymentUpdates(!!next.reminder.paymentUpdates);
     setEmail(next.reminder.email);
     setSms(next.reminder.sms);
     setPhone(next.reminder.phone);
@@ -159,6 +167,10 @@ export default function PaymentsPanel() {
     ].slice(0, 30),
   });
   const setup = async (kind: "bank" | "card" | "payout") => {
+    if (verificationUntil <= Date.now() / 1000)
+      throw new Error(
+        "Complete a fresh two-step security check before linking financial details.",
+      );
     if (st.demo) {
       if (kind === "payout")
         await persist(
@@ -174,6 +186,7 @@ export default function PaymentsPanel() {
                 id: "demo-bank",
                 funding: "bank" as const,
                 label: "Demo checking •••• 6789",
+                verification: "pending" as const,
               }
             : {
                 id: "demo-card",
@@ -185,6 +198,17 @@ export default function PaymentsPanel() {
             {
               ...state,
               methods: [...state.methods.filter((x) => x.id !== m.id), m],
+              bankLinks:
+                kind === "bank"
+                  ? [
+                      {
+                        id: "demo-bank-link",
+                        label: m.label,
+                        status: "verification_pending" as const,
+                        canVerify: true,
+                      },
+                    ]
+                  : state.bankLinks,
             },
             "A sample payment method was added or updated.",
           ),
@@ -209,6 +233,8 @@ export default function PaymentsPanel() {
   };
   const reviewPayment = () => {
     if (!method) throw new Error("Add and select a payment method first.");
+    if (method.verification === "pending")
+      throw new Error("Complete bank verification in Accounts before paying.");
     if (!to) throw new Error("Choose who to pay.");
     const cents = to === "app" ? state.appDues : parseMoney(amount);
     setReview({
@@ -260,25 +286,31 @@ export default function PaymentsPanel() {
           to_id: review.recipient,
           cents: review.cents,
           date: today(),
+          method: "bank_card",
         });
-      await persist({
-        ...state,
-        payments: [
+      await persist(
+        notice(
           {
-            id: review.id,
-            recipient: review.recipient,
-            cents: review.cents,
-            fee: review.fee,
-            status: "succeeded",
-            created_at: new Date().toISOString(),
-            methodLabel: method?.label,
-            dueId: review.dueId,
-            dueDate: review.dueDate,
-            requestId: review.requestId,
+            ...state,
+            payments: [
+              {
+                id: review.id,
+                recipient: review.recipient,
+                cents: review.cents,
+                fee: review.fee,
+                status: "succeeded",
+                created_at: new Date().toISOString(),
+                methodLabel: method?.label,
+                dueId: review.dueId,
+                dueDate: review.dueDate,
+                requestId: review.requestId,
+              },
+              ...state.payments.filter((p) => p.id !== review.id),
+            ],
           },
-          ...state.payments.filter((p) => p.id !== review.id),
-        ],
-      });
+          "Sample payment successful. Your household balance was updated.",
+        ),
+      );
       if (review.requestId) {
         const requests = await demoRequests(st.household!.id),
           request = requests.find((r) => r.id === review.requestId)!;
@@ -363,7 +395,15 @@ export default function PaymentsPanel() {
       throw new Error(
         "Verify this phone number before enabling text reminders.",
       );
-    const reminder = { email, sms, phone, days, consent };
+    const reminder = {
+      email,
+      sms,
+      phone,
+      days,
+      consent,
+      autopayNotices,
+      paymentUpdates,
+    };
     if (st.demo)
       await persist(
         notice(
@@ -587,6 +627,101 @@ export default function PaymentsPanel() {
               )}
               {section === "Accounts" && (
                 <>
+                  <BankSecurityCheck
+                    demo={st.demo}
+                    verifiedUntil={verificationUntil}
+                    busy={busy}
+                    onExpired={() => setVerificationUntil(0)}
+                    onVerified={async (until) => {
+                      if (st.demo) setVerificationUntil(until);
+                      else await load();
+                    }}
+                  />
+                  <Title style={{ fontSize: 22 }}>
+                    Step 2 · Verify your bank
+                  </Title>
+                  <Txt>
+                    Link your bank on the secure provider page. If small test
+                    deposits are required, complete that verification before
+                    making payments.
+                  </Txt>
+                  {(state.bankLinks || []).map((link) => (
+                    <View key={link.id} style={{ gap: 8, paddingVertical: 10 }}>
+                      <Txt style={{ fontFamily: "DMBold" }}>{link.label}</Txt>
+                      <Txt>
+                        {
+                          {
+                            awaiting_details:
+                              "Bank details needed · Continue secure setup",
+                            verification_pending:
+                              "Bank ownership verification pending",
+                            verified: "Bank ownership verified · Ready to pay",
+                            failed:
+                              "Bank verification failed · Link your bank again",
+                            expired: "Bank setup expired · Start a new link",
+                          }[link.status]
+                        }
+                      </Txt>
+                      {link.canVerify && (
+                        <Button
+                          secondary
+                          small
+                          label={
+                            st.demo
+                              ? "Complete sample bank verification"
+                              : "Complete bank verification"
+                          }
+                          disabled={busy}
+                          onPress={() =>
+                            void run(async () => {
+                              if (verificationUntil <= Date.now() / 1000)
+                                throw new Error(
+                                  "Complete a fresh two-step security check first.",
+                                );
+                              if (st.demo) {
+                                await persist({
+                                  ...state,
+                                  methods: state.methods.map((m) =>
+                                    m.id === "demo-bank"
+                                      ? { ...m, verification: "verified" }
+                                      : m,
+                                  ),
+                                  bankLinks: (state.bankLinks || []).map((l) =>
+                                    l.id === link.id
+                                      ? {
+                                          ...l,
+                                          status: "verified",
+                                          canVerify: false,
+                                        }
+                                      : l,
+                                  ),
+                                });
+                                setMessage(
+                                  "Sample bank verified. No real bank details were collected.",
+                                );
+                              } else {
+                                const response = await paymentAction(
+                                  "bank_verification",
+                                  { id: link.id },
+                                );
+                                if (
+                                  !response.url ||
+                                  new URL(response.url).protocol !== "https:"
+                                )
+                                  throw new Error(
+                                    "Secure verification is unavailable.",
+                                  );
+                                await Linking.openURL(response.url);
+                                setMessage(
+                                  "Finish bank verification securely, then return and refresh payment status.",
+                                );
+                              }
+                            })
+                          }
+                        />
+                      )}
+                    </View>
+                  ))}
                   <Title style={{ fontSize: 22 }}>Your payment methods</Title>
                   <Txt style={s.muted}>
                     Bank & debit: no surcharge. Credit cards: 2.5% of the
@@ -622,14 +757,22 @@ export default function PaymentsPanel() {
                       secondary
                       label={st.demo ? "Add sample bank" : "Link bank account"}
                       icon="Link"
-                      disabled={busy || !state.available}
+                      disabled={
+                        busy ||
+                        !state.available ||
+                        verificationUntil <= Date.now() / 1000
+                      }
                       onPress={() => void run(() => setup("bank"))}
                     />
                     <Button
                       secondary
                       label={st.demo ? "Add sample credit card" : "Add card"}
                       icon="Wallet"
-                      disabled={busy || !state.available}
+                      disabled={
+                        busy ||
+                        !state.available ||
+                        verificationUntil <= Date.now() / 1000
+                      }
                       onPress={() => void run(() => setup("card"))}
                     />
                   </View>
@@ -645,7 +788,7 @@ export default function PaymentsPanel() {
                     >
                       <Chip
                         active={selected === m.id}
-                        label={m.label}
+                        label={`${m.label}${m.verification === "pending" ? " · Verification pending" : ""}`}
                         onPress={() => {
                           setSelected(m.id);
                           setReview(null);
@@ -704,6 +847,22 @@ export default function PaymentsPanel() {
                       ? "Receiving payments is ready."
                       : "Receiving payments is not set up."}
                   </Txt>
+                  <Txt>
+                    {
+                      {
+                        not_started: "Receiving bank not linked",
+                        needs_details: "Receiving bank details needed",
+                        verification_pending:
+                          "Receiving bank verification in progress",
+                        ready: "Receiving bank verified · Ready for deposits",
+                        restricted:
+                          "Receiving bank needs attention · Review secure setup",
+                      }[
+                        state.payoutStatus ||
+                          (state.payoutReady ? "ready" : "not_started")
+                      ]
+                    }
+                  </Txt>
                   <Button
                     secondary
                     label={
@@ -711,7 +870,11 @@ export default function PaymentsPanel() {
                         ? "Set up sample receiving bank"
                         : "Set up receiving bank"
                     }
-                    disabled={busy || !state.available}
+                    disabled={
+                      busy ||
+                      !state.available ||
+                      verificationUntil <= Date.now() / 1000
+                    }
                     onPress={() => void run(() => setup("payout"))}
                   />
                   <Button
@@ -1121,6 +1284,30 @@ export default function PaymentsPanel() {
                     goes to your verified account email. You can turn either
                     channel off at any time.
                   </Txt>
+                  <Txt>
+                    Use your verified email/text channels below for payment
+                    updates and advance notices. In-app payment updates are
+                    always available; demo messages are never sent.
+                  </Txt>
+                  <Toggle
+                    label="Email/text advance autopay notices"
+                    value={autopayNotices}
+                    onChange={setAutopayNotices}
+                  />
+                  <Txt style={s.muted}>
+                    One day before autopay, see the scheduled amount, bank, and
+                    charge date. Pause future charges in Autopay.
+                  </Txt>
+                  <Toggle
+                    label="Email/text payment status updates"
+                    value={paymentUpdates}
+                    onChange={setPaymentUpdates}
+                  />
+                  <Txt style={s.muted}>
+                    Receive one update when a payment is pending, successful, or
+                    failed. Pending updates ask you to wait, without requesting
+                    another payment.
+                  </Txt>
                   <Toggle
                     label="Email payment reminders"
                     value={email}
@@ -1234,6 +1421,25 @@ export default function PaymentsPanel() {
                         .toLowerCase()
                         .includes(search.toLowerCase()),
                     ).length === 0 && <Txt>No payments match your search.</Txt>}
+                  {!!state.incomingPayments?.length && (
+                    <>
+                      <Title style={{ fontSize: 22 }}>
+                        Incoming roommate payments
+                      </Title>
+                      {state.incomingPayments.map((p) => (
+                        <View
+                          key={p.id}
+                          style={{ gap: 10, paddingVertical: 12 }}
+                        >
+                          <Txt style={{ fontFamily: "DMBold" }}>
+                            {fmt(p.cents)} from {recipientName(p.sender)} ·{" "}
+                            {paymentStatus(p.status).label}
+                          </Txt>
+                          <PaymentProgress status={p.status} />
+                        </View>
+                      ))}
+                    </>
+                  )}
                   {state.payments.length === 0 && (
                     <Txt style={s.muted}>No bank or card payments yet.</Txt>
                   )}
@@ -1258,15 +1464,7 @@ export default function PaymentsPanel() {
                           {p.methodLabel ||
                             "Payment method unavailable for this older payment"}
                         </Txt>
-                        <Txt
-                          style={{
-                            color: paymentStatus(p.status).attention
-                              ? C.red
-                              : C.muted,
-                          }}
-                        >
-                          {paymentStatus(p.status).help}
-                        </Txt>
+                        <PaymentProgress status={p.status} />
                         <Button
                           secondary
                           small

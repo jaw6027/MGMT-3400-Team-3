@@ -31,6 +31,12 @@ beforeAll(async () => {
       "utf8",
     ),
   );
+  await db.exec(
+    readFileSync(
+      "supabase/migrations/202611180003_payment_verification_updates.sql",
+      "utf8",
+    ),
+  );
   await db.exec(`insert into auth.users values('${a}','{}'),('${b}','{}');
     insert into households(id,name,currency) values('${house}','Home','USD');
     insert into members(id,household_id,user_id,name) values('${ma}','${house}','${a}','Alex'),('${mb}','${house}','${b}','Jordan');
@@ -51,6 +57,8 @@ it("denies both authenticated and anonymous access to provider contacts and paym
       "payment_reminder_deliveries",
       "payment_requests",
       "payment_notifications",
+      "bank_link_attempts",
+      "payment_update_deliveries",
     ])
       await expect(db.query(`select * from ${table}`)).rejects.toThrow(
         /permission denied/,
@@ -233,5 +241,30 @@ it("serializes request payment and cancellation, enforces payer and amount, and 
       ])
     ).rows,
   ).toHaveLength(1);
+  await db.exec("reset role");
+});
+
+it("records cash with participant permissions and prevents clients from claiming processor confirmation", async () => {
+  await db.exec("set role authenticated");
+  await db.query("select set_config('request.jwt.claim.sub',$1,false)", [a]);
+  const cash = "a0000000-0000-4000-8000-000000000001";
+  await db.query(
+    "insert into repayments(id,household_id,from_id,to_id,cents,date,recorded_by,method) values($1,$2,$3,$4,1250,'2026-11-18',$5,'cash')",
+    [cash, house, ma, mb, a],
+  );
+  expect(
+    (
+      await db.query<{ method: string }>(
+        "select method from repayments where id=$1",
+        [cash],
+      )
+    ).rows[0].method,
+  ).toBe("cash");
+  await expect(
+    db.query(
+      "insert into repayments(id,household_id,from_id,to_id,cents,date,recorded_by,method) values('a0000000-0000-4000-8000-000000000002',$1,$2,$3,1250,'2026-11-18',$4,'bank_card')",
+      [house, ma, mb, a],
+    ),
+  ).rejects.toThrow(/row-level security/);
   await db.exec("reset role");
 });

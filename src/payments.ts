@@ -9,6 +9,7 @@ export type PaymentMethod = {
   id: string;
   label: string;
   funding: "bank" | "credit" | "debit";
+  verification?: "verified" | "pending";
 };
 export type Due = {
   id: string;
@@ -39,6 +40,8 @@ export type Reminder = {
   phone: string;
   days: number;
   consent: boolean;
+  autopayNotices?: boolean;
+  paymentUpdates?: boolean;
 };
 export type PaymentRequest = {
   id: string;
@@ -52,7 +55,34 @@ export type PaymentRequest = {
   status?: string;
 };
 export type PaymentNotice = { id: string; message: string; created_at: string };
+export type BankLinkAttempt = {
+  id: string;
+  label: string;
+  status:
+    | "awaiting_details"
+    | "verification_pending"
+    | "verified"
+    | "failed"
+    | "expired";
+  canVerify: boolean;
+};
+export type IncomingPayment = {
+  id: string;
+  cents: number;
+  status: string;
+  created_at: string;
+  sender: string;
+};
 export type PaymentState = {
+  security?: { verifiedUntil: number };
+  bankLinks?: BankLinkAttempt[];
+  incomingPayments?: IncomingPayment[];
+  payoutStatus?:
+    | "not_started"
+    | "needs_details"
+    | "verification_pending"
+    | "ready"
+    | "restricted";
   requests?: PaymentRequest[];
   notifications?: PaymentNotice[];
   phoneVerified: boolean;

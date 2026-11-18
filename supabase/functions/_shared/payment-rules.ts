@@ -109,3 +109,48 @@ export function shouldRemind(status: string | undefined, paused = false) {
   // Processing and disputed payments must not invite a second debit.
   return !paused && (!status || status === "canceled");
 }
+
+// Call only after the same token has been authenticated with Supabase getUser.
+export function recentSecondFactor(claims: any, nowSeconds: number) {
+  if (claims?.aal !== "aal2" || !Array.isArray(claims.amr)) return 0;
+  const times = claims.amr
+    .filter((a: any) => a.method === "totp" && Number.isFinite(a.timestamp))
+    .map((a: any) => a.timestamp);
+  const latest = Math.max(0, ...times);
+  return latest <= nowSeconds && nowSeconds - latest < 300 ? latest + 300 : 0;
+}
+export function paymentEvent(status: string) {
+  return status === "created" || status === "processing"
+    ? "pending"
+    : ["succeeded", "failed", "requires_action"].includes(status)
+      ? status
+      : null;
+}
+export function transferProgress(status: string) {
+  if (status === "succeeded")
+    return {
+      step: 3,
+      label: "Payment completed",
+      detail:
+        "Your payment was confirmed and the household balance was updated. The receiving bank’s payout schedule may still apply.",
+    };
+  if (status === "processing")
+    return {
+      step: 2,
+      label: "Bank processing",
+      detail:
+        "The bank is processing this payment. No action needed; your roommate’s balance updates after confirmation.",
+    };
+  if (status === "created")
+    return {
+      step: 1,
+      label: "Payment started",
+      detail:
+        "Waiting for the payment provider. Check status before paying again.",
+    };
+  return {
+    step: 0,
+    label: paymentStatus(status).label,
+    detail: paymentStatus(status).help,
+  };
+}

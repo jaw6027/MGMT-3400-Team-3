@@ -31,12 +31,17 @@ let orders: any[] = [],
   sameHouse = true,
   automaticDues: any[] = [],
   reminderRows: any[] = [],
-  notices: any[] = [];
+  notices: any[] = [],
+  updateRows: any[] = [],
+  bankAttempts: any[] = [];
+let bankReady = true;
 let intentStatus = "succeeded",
   sends = 0;
 let smsSends = 0,
   smsOptedOut = false;
 const a = {
+  payment_updates: false,
+  autopay_notices: false,
   user_id: userId,
   customer_id: "cus_user",
   connect_id: null,
@@ -66,11 +71,16 @@ function reset() {
   automaticDues = [];
   reminderRows = [];
   notices = [];
+  updateRows = [];
+  bankAttempts = [];
+  bankReady = true;
   intentStatus = "succeeded";
   sends = 0;
   smsSends = 0;
   smsOptedOut = false;
   Object.assign(a, {
+    payment_updates: false,
+    autopay_notices: false,
     phone: "",
     phone_verified: false,
     email_reminders: true,
@@ -96,6 +106,43 @@ globalThis.fetch = async (
   const one = req.headers.get("accept")?.includes("object+json");
   const rows = (items: any[]) => json(one ? items[0] || null : items);
   if (url.host === "api.stripe.com") {
+    if (url.pathname === "/v1/setup_intents")
+      return json({
+        data: bankReady
+          ? [
+              {
+                id: "seti_bank",
+                status: "succeeded",
+                payment_method: "pm_fixture",
+              },
+            ]
+          : [],
+        has_more: false,
+      });
+    if (url.pathname === "/v1/checkout/sessions" && req.method === "POST")
+      return json({ id: "cs_bank", url: "https://checkout.stripe.com/sample" });
+    if (url.pathname === "/v1/checkout/sessions/cs_bank")
+      return json({
+        id: "cs_bank",
+        status: "complete",
+        setup_intent: {
+          id: "seti_bank",
+          status: bankReady ? "succeeded" : "requires_action",
+          payment_method: {
+            id: "pm_fixture",
+            type: "us_bank_account",
+            us_bank_account: { bank_name: "Sample bank", last4: "6789" },
+          },
+          next_action: bankReady
+            ? null
+            : {
+                verify_with_microdeposits: {
+                  hosted_verification_url: "https://verify.stripe.com/sample",
+                },
+              },
+        },
+      });
+
     if (url.pathname === "/v1/payment_methods")
       return json({ data: [], has_more: false });
     if (url.pathname.startsWith("/v1/payment_methods/"))
@@ -189,6 +236,36 @@ globalThis.fetch = async (
       notices.push(body);
     return req.method === "GET" ? rows(notices) : json(null);
   }
+  if (table === "bank_link_attempts") {
+    if (req.method === "POST")
+      bankAttempts.push({
+        id: "60000000-0000-4000-8000-000000000099",
+        ...body,
+      });
+    let matches = bankAttempts;
+    for (const key of ["id", "user_id"])
+      if (url.searchParams.get(key)?.startsWith("eq."))
+        matches = matches.filter(
+          (r) => r[key] === url.searchParams.get(key)!.slice(3),
+        );
+    return req.method === "GET" ? rows(matches) : json(null);
+  }
+  if (table === "payment_update_deliveries") {
+    if (req.method === "POST") {
+      if (
+        updateRows.some(
+          (r) =>
+            r.order_id === body.order_id &&
+            r.user_id === body.user_id &&
+            r.event === body.event &&
+            r.channel === body.channel,
+        )
+      )
+        return json({ code: "23505" }, 409);
+      updateRows.push(body);
+    }
+    return json(null);
+  }
   if (table === "payment_requests") return rows([]);
   if (table === "reserve_due_payment") {
     const value = body.order_data;
@@ -222,6 +299,7 @@ globalThis.fetch = async (
       "due_date",
       "user_id",
       "stripe_intent",
+      "recipient_id",
     ])
       if (url.searchParams.get(field)?.startsWith("eq."))
         matching = matching.filter(
@@ -396,7 +474,7 @@ Deno.test(
     assert((await first.json()).failures === 0);
     await request({}, "/run", "job-fixture");
     assert(orders.length === 1 && orders[0].status === "succeeded");
-    assert(sends === 1, "Only one reminder should be sent");
+    assert(Number(sends) === 1, "Only one reminder should be sent");
     assert(
       requests.filter((r) => r.url.pathname === "/v1/payment_intents")
         .length === 1,
@@ -602,7 +680,7 @@ Deno.test(
         ];
       const response = await request({}, "/run", "job-fixture");
       assert(response.status === 200);
-      assert(sends === 0, `${state} should suppress payment reminders`);
+      assert(Number(sends) === 0, `${state} should suppress payment reminders`);
     }
   },
 );
@@ -630,10 +708,13 @@ Deno.test(
     await request({}, "/run", "job-fixture");
     await request({}, "/run", "job-fixture");
     assert(orders.length === 1 && orders[0].status === "failed");
-    assert(notices.length === 1, "One durable warning per occurrence");
+    assert(
+      notices.filter((n) => n.event_key.startsWith("autopay-")).length === 1,
+      "One durable autopay warning per occurrence",
+    );
     assert(reminderRows.filter((r) => r.kind === "failure").length === 1);
     assert(
-      sends === 2,
+      Number(sends) === 2,
       "One normal due reminder and one failure alert, each claimed separately",
     );
   },
@@ -680,5 +761,163 @@ Deno.test(
         })
       ).status === 400,
     );
+  },
+);
+
+const secondFactorToken = (age = 0, aal = "aal2", sub = userId) =>
+  `header.${btoa(JSON.stringify({ sub, aal, amr: [{ method: "totp", timestamp: Math.floor(Date.now() / 1000) - age }] })).replace(/=/g, "")}.test-signature`;
+Deno.test(
+  "financial linking requires fresh AAL2 from the authenticated account and tracks verification progress",
+  async () => {
+    reset();
+    for (const bearer of [
+      "user-fixture",
+      secondFactorToken(301),
+      secondFactorToken(0, "aal1"),
+      secondFactorToken(0, "aal2", "another-user"),
+    ])
+      assert(
+        (await request({ action: "setup", kind: "bank" }, "", bearer))
+          .status === 400,
+      );
+    assert(
+      !requests.some((r) => r.url.pathname === "/v1/checkout/sessions"),
+      "Blocked linking must not reach Stripe",
+    );
+    const start = await request(
+      { action: "setup", kind: "bank" },
+      "",
+      secondFactorToken(),
+    );
+    assert(start.status === 200, await start.clone().text());
+    assert(bankAttempts.length === 1);
+    bankReady = false;
+    const progress = await request({ action: "status" });
+    assert(progress.status === 200, await progress.clone().text());
+    const data = await progress.json();
+    assert(data.bankLinks[0].status === "verification_pending");
+    assert(
+      !data.bankLinks[0].url,
+      "Verification URL must not be returned without a fresh check",
+    );
+    assert(
+      (await request({ action: "bank_verification", id: bankAttempts[0].id }))
+        .status === 400,
+    );
+    const verification = await request(
+      { action: "bank_verification", id: bankAttempts[0].id },
+      "",
+      secondFactorToken(),
+    );
+    assert(verification.status === 200);
+    assert(
+      (await verification.json()).url === "https://verify.stripe.com/sample",
+    );
+    bankReady = true;
+    assert(
+      (await (await request({ action: "status" })).json()).bankLinks[0]
+        .status === "verified",
+    );
+  },
+);
+Deno.test("unverified banks cannot pay or enable automatic dues", async () => {
+  reset();
+  funding = "bank";
+  bankReady = false;
+  assert((await request({ ...payment(), total: 1000 })).status === 400);
+  assert(!orders.length);
+  assert(
+    (
+      await request({
+        action: "save_due",
+        due: {
+          recipient: "roommate",
+          cents: 1000,
+          day: 17,
+          automatic: true,
+          method: "pm_fixture",
+          consent: true,
+        },
+      })
+    ).status === 400,
+  );
+});
+Deno.test(
+  "advance autopay notices are claimed once and include amount, bank, and date",
+  async () => {
+    reset();
+    funding = "bank";
+    a.autopay_notices = true;
+    a.reminder_days = 1;
+    Deno.env.set("RESEND_API_KEY", "re_fixture");
+    Deno.env.set("REMINDER_FROM_EMAIL", "billing@example.test");
+    automaticDues = [
+      {
+        id: "60000000-0000-4000-8000-000000000001",
+        user_id: userId,
+        household_id: "home",
+        recipient_id: "roommate",
+        cents: 2500,
+        due_day: 18,
+        automatic: true,
+        consent_at: "2026-01-01",
+        payment_method: "pm_fixture",
+      },
+    ];
+    await request({}, "/run", "job-fixture");
+    await request({}, "/run", "job-fixture");
+    assert(
+      Number(sends) === 1,
+      "Normal due notice must not duplicate an advance notice",
+    );
+    assert(reminderRows[0].kind === "autopay");
+    const message = requests.find((r) => r.url.host === "api.resend.com")!.body
+      .text;
+    assert(
+      message.includes("$25.00") &&
+        message.includes("2026-11-18") &&
+        message.includes("No surcharge"),
+    );
+    assert(!orders.length, "Advance notice must not charge early");
+  },
+);
+Deno.test(
+  "pending, successful and failed updates are deduplicated and respect opt-in",
+  async () => {
+    reset();
+    funding = "bank";
+    a.payment_updates = true;
+    a.reminder_days = 0;
+    Deno.env.set("RESEND_API_KEY", "re_fixture");
+    Deno.env.set("REMINDER_FROM_EMAIL", "billing@example.test");
+    // App dues avoid a second recipient in this delivery-count assertion.
+    Deno.env.set("APP_DUES_CENTS", "1000");
+    intentStatus = "processing";
+    const body = { ...payment(), recipient: "app", total: 1000 };
+    assert((await request(body)).status === 200);
+    assert(Number(sends) === 1 && updateRows[0].event === "pending");
+    await request(body);
+    assert(Number(sends) === 1, "Pending must not be sent twice");
+    intentStatus = "succeeded";
+    await request(body);
+    assert(
+      Number(sends) === 2 && updateRows.some((r) => r.event === "succeeded"),
+    );
+    intentStatus = "requires_payment_method";
+    await request({}, "/run", "job-fixture");
+    // A late bank return is reconciled by a signed webhook or explicit status sync,
+    // not by treating a previously completed order as a new debit.
+    assert(!updateRows.some((r) => r.event === "failed"));
+    reset();
+    a.payment_updates = false;
+    await request({ ...payment() });
+    assert(Number(sends) === 0, "Disabled updates must not send email");
+    reset();
+    funding = "bank";
+    a.payment_updates = true;
+    intentStatus = "requires_payment_method";
+    await request({ ...payment(), total: 1000 });
+    assert(updateRows.some((r) => r.event === "failed"));
+    Deno.env.set("APP_DUES_CENTS", "0");
   },
 );

@@ -1,4 +1,10 @@
 import { test, expect } from "@playwright/test";
+async function verifySampleSecurity(page: import("@playwright/test").Page) {
+  await page.getByLabel("Authenticator code", { exact: true }).fill("123456");
+  await page
+    .getByRole("button", { name: "Verify security code", exact: true })
+    .click();
+}
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.getByText("Recent purchases", { exact: true }).waitFor();
@@ -160,6 +166,7 @@ test("payments: credit surcharge is disclosed and only principal settles the dem
   await page
     .getByRole("button", { name: "Manage payments", exact: true })
     .click();
+  await verifySampleSecurity(page);
   await expect(
     page.getByText("Demo payments · no money moves", { exact: true }),
   ).toBeVisible();
@@ -200,6 +207,12 @@ test("payments: credit surcharge is disclosed and only principal settles the dem
     .getByRole("button", { name: "Add sample bank", exact: true })
     .click();
   await page
+    .getByRole("button", {
+      name: "Complete sample bank verification",
+      exact: true,
+    })
+    .click();
+  await page
     .getByRole("button", { name: "Set up sample receiving bank", exact: true })
     .click();
   await expect(
@@ -227,8 +240,15 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
   await page
     .getByRole("button", { name: "Manage payments", exact: true })
     .click();
+  await verifySampleSecurity(page);
   await page
     .getByRole("button", { name: "Add sample bank", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Complete sample bank verification",
+      exact: true,
+    })
     .click();
   await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("25");
@@ -314,6 +334,7 @@ test("payments: bank autopay consent, verified reminders, persistence and cancel
   await page
     .getByRole("button", { name: "Manage payments", exact: true })
     .click();
+  await verifySampleSecurity(page);
   await page.getByRole("button", { name: "Reminders", exact: true }).click();
   await expect(
     page.getByLabel("Reminder phone number", { exact: true }),

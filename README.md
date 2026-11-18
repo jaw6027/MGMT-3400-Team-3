@@ -53,7 +53,7 @@ For a physical Android device, scan the QR code in compatible Expo Go or connect
 
 ## Enable the live Supabase backend
 
-1. Create a Supabase project. In its SQL Editor, apply every SQL file in `supabase/migrations/` **once, in filename order**. For an existing project, apply only migrations not already installed. The base migration creates tables, RLS, and private receipts; `202611170001_payments.sql` adds payment support; `202611180001_household_signup.sql` adds retry-safe signup onboarding and household renaming; `202611180002_payment_experience.sql` adds paused schedules, payment requests, private account alerts, and serialized occurrence payments. No manual public-bucket setup is necessary.
+1. Create a Supabase project. In its SQL Editor, apply every SQL file in `supabase/migrations/` **once, in filename order**. For an existing project, apply only migrations not already installed. The base migration creates tables, RLS, and private receipts; `202611170001_payments.sql` adds payment support; `202611180001_household_signup.sql` adds retry-safe signup onboarding and household renaming; `202611180002_payment_experience.sql` adds paused schedules, payment requests, private account alerts, and serialized occurrence payments; `202611180003_payment_verification_updates.sql` adds cash labels, bank-link progress, and notification delivery claims. No manual public-bucket setup is necessary.
 2. Copy your project URL and **public anon key** from Project Settings → API into `.env`:
 
    ```dotenv
@@ -165,3 +165,18 @@ Screenshots of the actual sample-account flows: [upcoming payments and history](
 **Household → Account security** enables optional biometric unlock on supported iOS/Android devices with enrolled biometrics. Enabling/disabling requires a biometric check; the app locks on launch and after backgrounding. The lock does not replace server authentication or encrypt stored Supabase sessions. Signing out from the lock clears this device’s unlock preference so a subsequent password login can recover access if biometrics become unavailable. Face ID requires a native development/production build with the included permission plugin; Expo Go does not support Face ID. Web disables the biometric option. Physical-device biometric behavior still needs validation.
 
 **Household → Accessibility** provides a persistent larger-text preference in addition to native system text scaling. Shared buttons/chips have at least 44-point targets, labels wrap, input placeholders use the stronger muted-text contrast, headings are announced, and buttons expose disabled/busy states. Verify screen-reader behavior with VoiceOver/TalkBack on real devices.
+
+
+## Bank verification, cash, and payment notices
+
+**Balances → Manage payments → Accounts** requires an authenticator-app check before opening bank/card or receiving-bank setup. Add SplitCart to your authenticator using the QR code or enrollment key, then enter its six-digit code. The payment service validates a fresh, authenticated Supabase AAL2/TOTP claim; linking unlocks for five minutes. Enable TOTP MFA in Supabase Auth before live use. Biometric app unlock and phone verification do not replace this check. A lost authenticator needs the operator’s identity-verified recovery process; there is no password-only bypass.
+
+Bank ownership progress comes from Stripe: details needed, verification pending, verified, failed, or expired. Complete required test-deposit verification on Stripe’s secure page, then refresh status. Pending banks cannot pay or fund autopay. Existing bank methods are checked against successful SetupIntents. Receiving-bank progress separately shows missing details, provider review, restrictions, or readiness.
+
+**Record repayment → Cash** records cash already handed over and labels it in household history. It updates balances without moving money or sending a processor-confirmed payment notice. Other outside payments remain available. Client-recorded repayments cannot label themselves as a processor-confirmed bank/card payment.
+
+**Reminders** adds separate opt-ins for email/text advance autopay notices and payment-status updates. Advance notices are sent one day before a scheduled bank charge. Pending, successful, failed, and authentication-required updates are claimed once per payment/event/channel/recipient. They use the existing verified, opted-in email/text channels; in-app updates are also available. Recipient notifications and incoming progress expose the amount/status without sharing the sender’s masked payment method or surcharge. The demo simulates bank security with code **123456** and requires **Complete sample bank verification** before using a sample bank; no real MFA, email, texts, or transfers run there.
+
+Apply all migrations before deploying the updated `payments` function. The scheduled job also reconciles recent pending payments and delivers unclaimed updates for orders created in the last seven days; signed webhooks and app refresh handle later updates. Existing orders are excluded from retroactive notifications. Hosted MFA, real bank verification, SMS/email delivery, and physical-device behavior still need test-provider integration checks.
+
+Latest screen previews: [two-step verification](docs/previews/two-step-verification.png), [bank verification progress](docs/previews/bank-verification-progress.png), [roommate payment progress](docs/previews/payment-progress.png), [cash payment recording](docs/previews/cash-payment.png), and [autopay/status notice preferences](docs/previews/payment-notices.png).

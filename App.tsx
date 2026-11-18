@@ -1493,7 +1493,12 @@ function Balances({ onRepay }: { onRepay: () => void }) {
                     {name(r.from_id)} paid {name(r.to_id)}
                   </Txt>
                   <Txt style={{ fontSize: 10, color: C.muted, marginTop: 5 }}>
-                    Recorded payment · {shortDate(r.date)}
+                    {r.method === "cash"
+                      ? "Cash payment"
+                      : r.method === "bank_card"
+                        ? "Bank / card payment"
+                        : "Recorded payment"}{" "}
+                    · {shortDate(r.date)}
                   </Txt>
                 </View>
               </View>
@@ -2102,6 +2107,7 @@ function RepayModal({
     [date, setDate] = useState(today()),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "other">("other");
   const [id] = useState(uid());
   const lock = useRef(false);
   const save = async () => {
@@ -2123,6 +2129,7 @@ function RepayModal({
         cents: parseMoney(amount),
         date,
         recorded_by: st.user!.id,
+        method: paymentMethod,
       });
       onSaved();
     } catch (e: any) {
@@ -2155,6 +2162,25 @@ function RepayModal({
           transfer money.
         </Txt>
       </View>
+      <Txt style={s.label}>PAYMENT TYPE</Txt>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        <Chip
+          label="Cash"
+          active={paymentMethod === "cash"}
+          onPress={() => setPaymentMethod("cash")}
+        />
+        <Chip
+          label="Other outside payment"
+          active={paymentMethod === "other"}
+          onPress={() => setPaymentMethod("other")}
+        />
+      </View>
+      {paymentMethod === "cash" && (
+        <Txt>
+          Only record cash that has already been handed over. Confirming updates
+          your household balance; SplitCart does not transfer money.
+        </Txt>
+      )}
       <Txt style={s.label}>WHO SENT IT?</Txt>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         {st.members.map((m) => (
@@ -2196,7 +2222,11 @@ function RepayModal({
         </Txt>
       )}
       <Button
-        label="Confirm recorded payment"
+        label={
+          paymentMethod === "cash"
+            ? "Confirm cash payment"
+            : "Confirm recorded payment"
+        }
         icon="Check"
         loading={busy}
         onPress={save}

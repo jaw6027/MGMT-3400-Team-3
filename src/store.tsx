@@ -129,14 +129,15 @@ export function Provider({ children }: { children: React.ReactNode }) {
     const sync = async (session: any) => {
       if (!alive) return;
       const account = session?.user.id || null;
-      if (account !== loadedAccount) {
+      const accountChanged = account !== loadedAccount;
+      if (accountChanged) {
         setData(empty);
         setHouseholdIntent(null);
         setHouseholdWelcome(false);
         setError("");
         loadedAccount = account;
       }
-      setLoading(true);
+      if (accountChanged) setLoading(true);
       setUser(
         session
           ? {

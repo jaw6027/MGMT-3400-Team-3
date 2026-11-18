@@ -85,3 +85,46 @@ it("labels provider states and exports honest receipts without full bank/card de
     receiptText({ ...payment, status: "processing" }, "Jordan", "", false),
   ).toContain("not proof of a completed payment");
 });
+
+it("requires a recent verified authenticator claim and maps honest transfer steps", async () => {
+  const { recentSecondFactor, transferProgress, paymentEvent } =
+    await import("../supabase/functions/_shared/payment-rules");
+  expect(
+    recentSecondFactor(
+      { aal: "aal1", amr: [{ method: "totp", timestamp: 900 }] },
+      1000,
+    ),
+  ).toBe(0);
+  expect(
+    recentSecondFactor(
+      { aal: "aal2", amr: [{ method: "password", timestamp: 999 }] },
+      1000,
+    ),
+  ).toBe(0);
+  expect(
+    recentSecondFactor(
+      { aal: "aal2", amr: [{ method: "totp", timestamp: 699 }] },
+      1000,
+    ),
+  ).toBe(0);
+  expect(
+    recentSecondFactor(
+      { aal: "aal2", amr: [{ method: "totp", timestamp: 1001 }] },
+      1000,
+    ),
+  ).toBe(0);
+  expect(
+    recentSecondFactor(
+      { aal: "aal2", amr: [{ method: "totp", timestamp: 900 }] },
+      1000,
+    ),
+  ).toBe(1200);
+  expect(paymentEvent("created")).toBe("pending");
+  expect(paymentEvent("processing")).toBe("pending");
+  expect(paymentEvent("succeeded")).toBe("succeeded");
+  expect(paymentEvent("refunded")).toBeNull();
+  expect(transferProgress("processing").step).toBe(2);
+  expect(transferProgress("succeeded").step).toBe(3);
+  expect(transferProgress("failed").label).toBe("Failed");
+  expect(transferProgress("succeeded").detail).toContain("payout schedule");
+});

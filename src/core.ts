@@ -20,6 +20,7 @@ export type Expense = {
   created_at: string;
 };
 export type Repayment = {
+  method?: "cash" | "other" | "bank_card";
   id: string;
   household_id: string;
   from_id: string;

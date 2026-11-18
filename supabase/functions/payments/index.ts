@@ -6,6 +6,8 @@ import {
   reminderDate,
   validateReminder,
   shouldRemind,
+  recentSecondFactor,
+  paymentEvent,
   type Funding,
 } from "../_shared/payment-rules.ts";
 
@@ -33,6 +35,65 @@ function check(yes: unknown, message: string): asserts yes {
 function result<T>({ data, error }: { data: T; error: any }): T {
   if (error) throw new Error("Payment data could not be saved. Please retry.");
   return data;
+}
+function secondFactorExpiry(token: string, userId: string) {
+  try {
+    const raw = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const claims = JSON.parse(
+      atob(raw.padEnd(Math.ceil(raw.length / 4) * 4, "=")),
+    );
+    return claims.sub === userId
+      ? recentSecondFactor(claims, Math.floor(Date.now() / 1000))
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+async function bankVerified(customerId: string, methodId: string) {
+  for await (const setup of stripe.setupIntents.list({
+    customer: customerId,
+    payment_method: methodId,
+    limit: 100,
+  }))
+    if (setup.status === "succeeded") return true;
+  return false;
+}
+async function bankAttempt(row: any) {
+  const session = await stripe.checkout.sessions.retrieve(row.session_id, {
+    expand: ["setup_intent.payment_method"],
+  });
+  let setup = session.setup_intent;
+  if (typeof setup === "string")
+    setup = await stripe.setupIntents.retrieve(setup, {
+      expand: ["payment_method"],
+    });
+  const pm =
+    setup && typeof setup.payment_method === "object"
+      ? setup.payment_method
+      : null;
+  const url =
+    setup?.next_action?.verify_with_microdeposits?.hosted_verification_url;
+  const state =
+    session.status === "expired"
+      ? "expired"
+      : setup?.status === "succeeded"
+        ? "verified"
+        : setup?.status === "canceled" ||
+            (session.status === "complete" &&
+              setup?.status === "requires_payment_method")
+          ? "failed"
+          : url ||
+              setup?.status === "processing" ||
+              setup?.status === "requires_action"
+            ? "verification_pending"
+            : "awaiting_details";
+  return {
+    id: row.id,
+    label: pm ? methodLabel(pm) : "Linked bank",
+    status: state,
+    canVerify: !!url,
+    url,
+  };
 }
 async function account(userId: string) {
   result(
@@ -82,7 +143,7 @@ async function failedAutopay(order: any) {
   );
   const a = await account(order.user_id);
   const { data } = await db.auth.admin.getUserById(order.user_id);
-  if (data.user && a.reminder_consent_at)
+  if (data.user && a.reminder_consent_at && !a.payment_updates)
     await remind(d, order.due_date, a, data.user, "failure");
 }
 async function customer(user: any, a: any) {
@@ -175,6 +236,11 @@ async function method(customerId: string, id: string) {
     funding,
     "Only verified US bank accounts, credit cards, and debit cards are supported.",
   );
+  if (funding === "bank")
+    check(
+      await bankVerified(customerId, id),
+      "Bank verification is pending. Complete bank verification in Accounts before paying.",
+    );
   return { pm, funding };
 }
 function methodLabel(pm: Stripe.PaymentMethod) {
@@ -202,6 +268,7 @@ async function syncIntent(order: any, pi: Stripe.PaymentIntent) {
       }),
     );
     await failedAutopay(order);
+    await paymentUpdate({ ...order, status: "failed" });
     return;
   }
   if (pi.status === "succeeded")
@@ -232,6 +299,10 @@ async function syncIntent(order: any, pi: Stripe.PaymentIntent) {
     if (["failed", "requires_action"].includes(status))
       await failedAutopay(order);
   }
+  const saved = result(
+    await db.from("payment_orders").select("*").eq("id", order.id).single(),
+  );
+  await paymentUpdate(saved);
 }
 async function charge(user: any, input: any, due?: any) {
   check(enabled(), "Live payments are not activated yet.");
@@ -411,6 +482,8 @@ async function status(user: any) {
   const a = await account(user.id);
   const methods: any[] = [];
   let payoutReady = false;
+  let payoutStatus = "not_started";
+  const bankLinks: any[] = [];
   if (enabled()) {
     if (a.customer_id) {
       for (const type of ["card", "us_bank_account"] as const) {
@@ -428,6 +501,12 @@ async function status(user: any) {
             id: pm.id,
             label: methodLabel(pm),
             funding: pm.type === "us_bank_account" ? "bank" : pm.card!.funding,
+            verification:
+              pm.type === "us_bank_account"
+                ? (await bankVerified(a.customer_id, pm.id))
+                  ? "verified"
+                  : "pending"
+                : undefined,
           });
         }
       }
@@ -437,6 +516,25 @@ async function status(user: any) {
       payoutReady = !!(
         c.payouts_enabled && c.capabilities?.transfers === "active"
       );
+      payoutStatus = payoutReady
+        ? "ready"
+        : c.requirements?.currently_due?.length
+          ? "needs_details"
+          : c.requirements?.disabled_reason
+            ? "restricted"
+            : "verification_pending";
+    }
+    const attempts = result(
+      await db
+        .from("bank_link_attempts")
+        .select("id,session_id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(10),
+    );
+    for (const row of attempts || []) {
+      const { url, ...progress } = await bankAttempt(row);
+      bankLinks.push(progress);
     }
     // Polling also repairs a lost/delayed webhook without trusting browser redirects.
     const pending = result(
@@ -507,7 +605,24 @@ async function status(user: any) {
       .order("created_at", { ascending: false })
       .limit(30),
   );
+  const incoming = self
+    ? result(
+        await db
+          .from("payment_orders")
+          .select("id,cents,status,created_at,from_id")
+          .eq("recipient_id", self.id)
+          .eq("household_id", self.household_id)
+          .order("created_at", { ascending: false })
+          .limit(100),
+      )
+    : [];
   return {
+    bankLinks,
+    payoutStatus,
+    incomingPayments: (incoming || []).map((p: any) => ({
+      ...p,
+      sender: p.from_id,
+    })),
     requests: (requests || []).map((r: any) => ({
       id: r.id,
       requester: r.requester_id,
@@ -535,6 +650,8 @@ async function status(user: any) {
       phone: a.phone || "",
       days: a.reminder_days,
       consent: !!a.reminder_consent_at,
+      autopayNotices: a.autopay_notices,
+      paymentUpdates: a.payment_updates,
     },
     dues: (dues || []).map((d: any) => ({
       id: d.id,
@@ -579,11 +696,144 @@ async function twilio(path: string, fields: Record<string, string>) {
     );
   return json;
 }
+async function billingMessage(
+  channel: string,
+  a: any,
+  user: any,
+  text: string,
+  subject: string,
+  key: string,
+) {
+  if (channel === "sms") {
+    check(
+      env("TWILIO_MESSAGING_SERVICE_SID"),
+      "Text reminders are not configured yet.",
+    );
+    await twilio(
+      `api.twilio.com/2010-04-01/Accounts/${env("TWILIO_ACCOUNT_SID")}/Messages.json`,
+      {
+        To: a.phone,
+        MessagingServiceSid: env("TWILIO_MESSAGING_SERVICE_SID"),
+        Body: `${text} Reply STOP to opt out.`,
+      },
+    );
+  } else {
+    check(
+      env("RESEND_API_KEY") && env("REMINDER_FROM_EMAIL"),
+      "Email reminders are not configured yet.",
+    );
+    const stop = `${env("SUPABASE_URL")}/functions/v1/payments/unsubscribe?token=${a.unsubscribe_token}`;
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env("RESEND_API_KEY")}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": key,
+      },
+      body: JSON.stringify({
+        from: env("REMINDER_FROM_EMAIL"),
+        to: [user.email],
+        subject,
+        text: `${text}\n\nTurn off email reminders: ${stop}`,
+      }),
+    });
+    check(response.ok, "Email delivery failed.");
+  }
+}
+async function paymentUpdate(order: any) {
+  const event = paymentEvent(order.status);
+  if (!event || order.notify_events === false) return;
+  const targets = [{ id: order.user_id, incoming: false }];
+  if (order.recipient_id) {
+    const receiver = result(
+      await db
+        .from("members")
+        .select("user_id,household_id,left_at")
+        .eq("id", order.recipient_id)
+        .maybeSingle(),
+    );
+    if (
+      receiver &&
+      !receiver.left_at &&
+      receiver.household_id === order.household_id &&
+      receiver.user_id !== order.user_id
+    )
+      targets.push({ id: receiver.user_id, incoming: true });
+  }
+  for (const target of targets) {
+    const prefix = target.incoming
+      ? "An incoming roommate payment"
+      : "Your payment";
+    const text = `SplitCart: ${prefix} of $${(order.cents / 100).toFixed(2)} ${event === "pending" ? "is pending. Wait for confirmation before making another payment." : event === "succeeded" ? "was successful. The household balance has been updated; bank payout timing may still apply." : event === "failed" ? "failed. Check Activity and your bank before trying again." : "needs bank authentication. Open Activity for next steps."} Reference ${order.id}.`;
+    await notify(target.id, text, `payment-${order.id}-${event}`);
+    const a = await account(target.id);
+    if (!a.payment_updates || !a.reminder_consent_at) continue;
+    const { data } = await db.auth.admin.getUserById(target.id);
+    const user = data.user;
+    if (!user) continue;
+    for (const channel of ["email", "sms"]) {
+      if (
+        !(channel === "email"
+          ? a.email_reminders && user.email_confirmed_at
+          : a.sms_reminders && a.phone_verified)
+      )
+        continue;
+      const latest = result(
+        await db
+          .from("payment_orders")
+          .select("status")
+          .eq("id", order.id)
+          .single(),
+      );
+      if (paymentEvent(latest?.status || "") !== event) continue;
+      const claim = await db.from("payment_update_deliveries").insert({
+        order_id: order.id,
+        user_id: target.id,
+        event,
+        channel,
+        status: "sending",
+      });
+      if (claim.error?.code === "23505") continue;
+      result(claim);
+      let state = "sent";
+      try {
+        await billingMessage(
+          channel,
+          a,
+          user,
+          text,
+          "Your SplitCart payment update",
+          `payment-${order.id}-${target.id}-${event}-${channel}`,
+        );
+      } catch (e) {
+        state = "failed";
+        if (e instanceof Error && e.message === "SMS_OPTED_OUT")
+          result(
+            await db
+              .from("billing_accounts")
+              .update({ sms_reminders: false })
+              .eq("user_id", target.id),
+          );
+      }
+      result(
+        await db
+          .from("payment_update_deliveries")
+          .update({ status: state })
+          .eq("order_id", order.id)
+          .eq("user_id", target.id)
+          .eq("event", event)
+          .eq("channel", channel),
+      );
+    }
+  }
+}
 async function remind(d: any, date: string, a: any, user: any, kind = "due") {
   const text =
-    kind === "failure"
-      ? `SplitCart: automatic payment of $${(d.cents / 100).toFixed(2)} for ${date} needs attention. Check payment activity and your bank before paying again.`
-      : `SplitCart: your $${(d.cents / 100).toFixed(2)} due is on ${date} (UTC). ${d.automatic ? "Autopay is enabled; check payment status in the app." : "Open SplitCart to review and pay."}`;
+    kind === "autopay"
+      ? `SplitCart: autopay will charge $${(d.cents / 100).toFixed(2)} to ${d.method_label || "your selected bank"} on ${date} (UTC). No surcharge. Open Autopay to review or pause future payments.`
+      : kind === "failure"
+        ? `SplitCart: automatic payment of $${(d.cents / 100).toFixed(2)} for ${date} needs attention. Check payment activity and your bank before paying again.`
+        : `SplitCart: your $${(d.cents / 100).toFixed(2)} due is on ${date} (UTC). ${d.automatic ? "Autopay is enabled; check payment status in the app." : "Open SplitCart to review and pay."}`;
   for (const channel of ["email", "sms"]) {
     if (
       !(channel === "email"
@@ -600,7 +850,7 @@ async function remind(d: any, date: string, a: any, user: any, kind = "due") {
         .maybeSingle(),
     );
     if (
-      kind === "due"
+      kind === "due" || kind === "autopay"
         ? !shouldRemind(latest?.status, d.paused)
         : latest?.status === "succeeded"
     )
@@ -617,44 +867,18 @@ async function remind(d: any, date: string, a: any, user: any, kind = "due") {
     if (claim.error?.code === "23505") continue;
     result(claim);
     try {
-      if (channel === "sms") {
-        check(
-          env("TWILIO_MESSAGING_SERVICE_SID"),
-          "Text reminders are not configured yet.",
-        );
-        await twilio(
-          `api.twilio.com/2010-04-01/Accounts/${env("TWILIO_ACCOUNT_SID")}/Messages.json`,
-          {
-            To: a.phone,
-            MessagingServiceSid: env("TWILIO_MESSAGING_SERVICE_SID"),
-            Body: `${text} Reply STOP to opt out.`,
-          },
-        );
-      } else {
-        check(
-          env("RESEND_API_KEY") && env("REMINDER_FROM_EMAIL"),
-          "Email reminders are not configured yet.",
-        );
-        const stop = `${env("SUPABASE_URL")}/functions/v1/payments/unsubscribe?token=${a.unsubscribe_token}`;
-        const sent = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${env("RESEND_API_KEY")}`,
-            "Content-Type": "application/json",
-            "Idempotency-Key": `reminder-${kind}-${d.id}-${date}`,
-          },
-          body: JSON.stringify({
-            from: env("REMINDER_FROM_EMAIL"),
-            to: [user.email],
-            subject:
-              kind === "failure"
-                ? "Your SplitCart automatic payment needs attention"
-                : "Your SplitCart payment reminder",
-            text: `${text}\n\nTurn off email reminders: ${stop}`,
-          }),
-        });
-        check(sent.ok, "Email delivery failed.");
-      }
+      await billingMessage(
+        channel,
+        a,
+        user,
+        text,
+        kind === "failure"
+          ? "Your SplitCart automatic payment needs attention"
+          : kind === "autopay"
+            ? "Your SplitCart autopay is scheduled for tomorrow"
+            : "Your SplitCart payment reminder",
+        `reminder-${kind}-${d.id}-${date}-${channel}`,
+      );
       result(
         await db
           .from("payment_reminder_deliveries")
@@ -694,6 +918,34 @@ async function worker() {
     .slice(0, 7);
   let visited = 0,
     failures = 0;
+  const since = new Date(now.getTime() - 7 * 86400000).toISOString();
+  for (let offset = 0; ; offset += 100) {
+    const orders = result(
+      await db
+        .from("payment_orders")
+        .select("*")
+        .eq("notify_events", true)
+        .gte("created_at", since)
+        .order("id")
+        .range(offset, offset + 99),
+    );
+    for (const order of orders || []) {
+      try {
+        if (
+          order.stripe_intent &&
+          ["created", "processing", "requires_action"].includes(order.status)
+        )
+          await syncIntent(
+            order,
+            await stripe.paymentIntents.retrieve(order.stripe_intent),
+          );
+        else await paymentUpdate(order);
+      } catch {
+        failures++;
+      }
+    }
+    if (!orders || orders.length < 100) break;
+  }
   for (let offset = 0; ; offset += 100) {
     const dues = result(
       await db
@@ -731,8 +983,31 @@ async function worker() {
               .maybeSingle(),
           );
           if (
+            d.automatic &&
+            d.consent_at &&
+            reminderDate(date, 1) === today &&
+            shouldRemind(existing?.status, d.paused)
+          ) {
+            await notify(
+              d.user_id,
+              `Autopay of $${(d.cents / 100).toFixed(2)} is scheduled for ${date} (UTC). Open Autopay to review the bank or pause future payments.`,
+              `autopay-notice-${d.id}-${date}`,
+            );
+            if (a.autopay_notices && a.reminder_consent_at) {
+              const bank = await method(a.customer_id, d.payment_method);
+              await remind(
+                { ...d, method_label: methodLabel(bank.pm) },
+                date,
+                a,
+                user,
+                "autopay",
+              );
+            }
+          }
+          if (
             a.reminder_consent_at &&
             reminderDate(date, a.reminder_days) === today &&
+            !(d.automatic && a.autopay_notices && a.reminder_days === 1) &&
             shouldRemind(existing?.status, d.paused)
           )
             await remind(d, date, a, user);
@@ -910,7 +1185,31 @@ export async function handler(req: Request) {
       input = await req.json(),
       a = await account(user.id);
     const action = input.action;
-    if (action === "status") return send(await status(user));
+    const verifiedUntil = secondFactorExpiry(token, user.id);
+    if (action === "status")
+      return send({ ...(await status(user)), security: { verifiedUntil } });
+    if (["setup", "payout_setup", "bank_verification"].includes(action))
+      check(
+        user.email_confirmed_at && verifiedUntil > 0,
+        "Verify your email and complete a fresh two-step security check in Accounts before linking financial details.",
+      );
+    if (action === "bank_verification") {
+      check(enabled(), "Live payments are not activated yet.");
+      const row = result(
+        await db
+          .from("bank_link_attempts")
+          .select("*")
+          .eq("id", input.id)
+          .eq("user_id", user.id)
+          .single(),
+      );
+      const progress = await bankAttempt(row);
+      check(
+        progress.url && new URL(progress.url).protocol === "https:",
+        "No verification step is available. Refresh bank progress.",
+      );
+      return send({ url: progress.url });
+    }
     if (action === "pause_due") {
       check(
         input.paused === true,
@@ -1027,6 +1326,8 @@ export async function handler(req: Request) {
             email_reminders: r.email,
             sms_reminders: r.sms,
             reminder_days: r.days,
+            autopay_notices: r.autopayNotices === true,
+            payment_updates: r.paymentUpdates === true,
             reminder_consent_at: r.consent ? new Date().toISOString() : null,
           })
           .eq("user_id", user.id),
@@ -1175,6 +1476,12 @@ export async function handler(req: Request) {
         success_url: env("APP_URL"),
         cancel_url: env("APP_URL"),
       });
+      if (input.kind === "bank")
+        result(
+          await db
+            .from("bank_link_attempts")
+            .insert({ user_id: user.id, session_id: session.id }),
+        );
       await notify(
         user.id,
         "Secure payment-method setup was opened. Return to Accounts to verify any changes.",

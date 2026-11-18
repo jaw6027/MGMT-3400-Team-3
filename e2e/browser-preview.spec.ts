@@ -1,4 +1,10 @@
 import { test, expect, Page } from "@playwright/test";
+async function verifySampleSecurity(page: import("@playwright/test").Page) {
+  await page.getByLabel("Authenticator code", { exact: true }).fill("123456");
+  await page
+    .getByRole("button", { name: "Verify security code", exact: true })
+    .click();
+}
 const signout = async (page: Page) => {
   await page.getByRole("tab", { name: "Household", exact: true }).click();
   await page
@@ -196,6 +202,7 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
   await page
     .getByRole("button", { name: "Manage payments", exact: true })
     .click();
+  await verifySampleSecurity(page);
   await page
     .getByRole("button", { name: "Add sample credit card", exact: true })
     .click();
@@ -224,6 +231,12 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
   await page.getByRole("button", { name: "Accounts", exact: true }).click();
   await page
     .getByRole("button", { name: "Add sample bank", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Complete sample bank verification",
+      exact: true,
+    })
     .click();
   await page.getByRole("button", { name: "Autopay", exact: true }).click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("25");
@@ -295,6 +308,7 @@ test("simulates card and bank payments, manual repayments, autopay consent, and 
   await page
     .getByRole("button", { name: "Manage payments", exact: true })
     .click();
+  await verifySampleSecurity(page);
   await page.getByRole("button", { name: "Reminders", exact: true }).click();
   await expect(
     page.getByLabel("Reminder phone number", { exact: true }),
@@ -318,7 +332,9 @@ test("upcoming dues link to completed payments, searchable history, and download
   const button = (name: string) =>
     page.getByRole("button", { name, exact: true });
   await button("Manage payments").click();
+  await verifySampleSecurity(page);
   await button("Add sample bank").click();
+  await button("Complete sample bank verification").click();
   await button("Autopay").click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("42.50");
   const day = Math.min(new Date().getUTCDate(), 28);
@@ -378,7 +394,9 @@ test("autopay schedules can be edited and paused without losing the schedule", a
     page.getByRole("button", { name, exact: true });
   await page.getByRole("tab", { name: "Balances", exact: true }).click();
   await button("Manage payments").click();
+  await verifySampleSecurity(page);
   await button("Add sample bank").click();
+  await button("Complete sample bank verification").click();
   await button("Autopay").click();
   await page.getByLabel("Payment amount (USD)", { exact: true }).fill("25");
   await page
@@ -433,6 +451,7 @@ test("roommates can request payment with a purchase and see the paid result acro
     page.getByRole("button", { name, exact: true });
   await page.getByRole("tab", { name: "Balances", exact: true }).click();
   await button("Manage payments").click();
+  await verifySampleSecurity(page);
   await button("Requests").click();
   await page.getByLabel("Requested amount (USD)").fill("12.75");
   await page.getByLabel("Request note (optional)").fill("Your grocery share");
@@ -449,7 +468,9 @@ test("roommates can request payment with a purchase and see the paid result acro
   await button("Log in").click();
   await page.getByRole("tab", { name: "Balances", exact: true }).click();
   await button("Manage payments").click();
+  await verifySampleSecurity(page);
   await button("Add sample bank").click();
+  await button("Complete sample bank verification").click();
   await button("Requests").click();
   await expect(
     page.getByText("Purchase: Weekly grocery run", { exact: true }),
@@ -464,6 +485,7 @@ test("roommates can request payment with a purchase and see the paid result acro
   await button("Open sample household").click();
   await page.getByRole("tab", { name: "Balances", exact: true }).click();
   await button("Manage payments").click();
+  await verifySampleSecurity(page);
   await button("Requests").click();
   await expect(page.getByText("Paid", { exact: true })).toBeVisible();
   await expect(button("Cancel request to Jordan Lee")).toHaveCount(0);
@@ -507,7 +529,9 @@ test("pending, processing and failed history entries explain the next step witho
     page.getByRole("button", { name, exact: true });
   await page.getByRole("tab", { name: "Balances", exact: true }).click();
   await button("Manage payments").click();
+  await verifySampleSecurity(page);
   await button("Add sample bank").click();
+  await button("Complete sample bank verification").click();
   await page.evaluate(() => {
     const key = Object.keys(localStorage).find((k) =>
       k.startsWith("splitcart-payments-demo-v1-"),
@@ -535,10 +559,94 @@ test("pending, processing and failed history entries explain the next step witho
   await expect(
     page.getByText("$5.00 to SplitCart · Failed (demo)", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByText(/Your bank is processing this payment/),
-  ).toBeVisible();
+  await expect(page.getByText(/bank is processing this payment/)).toBeVisible();
   await expect(
     page.getByText(/Check your bank details and available funds/),
   ).toBeVisible();
+});
+
+test("bank linking requires two-step verification and bank ownership completion before a payment", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await expect(button("Add sample bank")).toBeDisabled();
+  await page.getByLabel("Authenticator code").fill("000000");
+  await button("Verify security code").click();
+  await expect(
+    page.getByText("Use sample code 123456.", { exact: true }),
+  ).toBeVisible();
+  await verifySampleSecurity(page);
+  await button("Add sample bank").click();
+  await expect(
+    page.getByText("Bank ownership verification pending", { exact: true }),
+  ).toBeVisible();
+  await button("Pay").click();
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("5");
+  await button("Review payment").click();
+  await expect(
+    page.getByText("Complete bank verification in Accounts before paying.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(button("Confirm demo payment")).toHaveCount(0);
+  await button("Accounts").click();
+  await button("Complete sample bank verification").click();
+  await expect(
+    page.getByText("Bank ownership verified · Ready to pay", { exact: true }),
+  ).toBeVisible();
+  await button("Pay").click();
+  await button("Review payment").click();
+  await expect(button("Confirm demo payment")).toBeVisible();
+});
+test("cash repayments are explicitly marked in household history and update balances", async ({
+  page,
+}) => {
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Record repayment", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByLabel("Amount (USD)", { exact: true }).fill("12.50");
+  await expect(
+    page.getByText(/Only record cash that has already been handed over/),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Confirm cash payment", exact: true })
+    .click();
+  await expect(page.getByText(/Cash payment ·/)).toBeVisible();
+  const db = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("splitcart-browser-preview-v1")!),
+  );
+  expect(db.repayments[0].method).toBe("cash");
+  expect(db.repayments[0].cents).toBe(1250);
+});
+test("advance autopay notices and payment updates persist with chosen delivery channels", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Reminders").click();
+  for (const name of [
+    "Email/text advance autopay notices",
+    "Email/text payment status updates",
+    "Email payment reminders",
+    "I agree to receive payment reminders and verification texts. Message/data rates may apply; reply STOP to stop texts",
+  ])
+    await page.getByRole("switch", { name, exact: true }).click();
+  await button("Save reminder preferences").click();
+  await page.reload();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Reminders").click();
+  for (const name of [
+    "Email/text advance autopay notices",
+    "Email/text payment status updates",
+    "Email payment reminders",
+  ])
+    await expect(page.getByRole("switch", { name, exact: true })).toBeChecked();
 });
