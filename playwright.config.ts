@@ -7,6 +7,7 @@ export default defineConfig({
     "**/shopping-preview.spec.ts",
     "**/chores-preview.spec.ts",
     "**/support-preview.spec.ts",
+    "**/grocery-preview.spec.ts",
   ],
   fullyParallel: false,
   workers: 1,

@@ -1,3 +1,4 @@
+import type { GroceryState } from "./grocery";
 import { calculateReceipt } from "./receiptItems";
 import type { ReceiptDetails } from "./receiptItems";
 export type Member = {
@@ -8,6 +9,7 @@ export type Member = {
 };
 export type Share = { member_id: string; cents: number };
 export type Expense = {
+  grocery_trip_id?: string | null;
   receipt_details?: ReceiptDetails | null;
   one_time?: boolean;
   id: string;
@@ -97,6 +99,7 @@ export type ChoreCompletion = {
   voided_by?: string | null;
 };
 export type Data = {
+  grocery?: GroceryState;
   chores?: Chore[];
   choreCompletions?: ChoreCompletion[];
   shoppingItems?: ShoppingItem[];

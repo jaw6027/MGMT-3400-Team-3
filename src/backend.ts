@@ -80,6 +80,14 @@ export async function loadData(): Promise<Data> {
       if (data.length < 500) return rows;
     }
   }
+  const { data: grocery, error: groceryError } = await c.rpc(
+    "grocery_snapshot",
+    { household_id: id },
+  );
+  if (groceryError)
+    throw new Error(
+      `Grocery rotation could not load. Apply the grocery migration and refresh. ${groceryError.message}`,
+    );
   const [
     household,
     members,
@@ -101,6 +109,7 @@ export async function loadData(): Promise<Data> {
   ]);
   if (household.error) throw household.error;
   return {
+    grocery,
     household: household.data,
     members,
     expenses,

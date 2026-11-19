@@ -1,3 +1,4 @@
+import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
 import SupportChat from "./src/SupportChat";
 import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
 import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
@@ -95,6 +96,7 @@ import {
 import ShoppingList from "./src/ShoppingList";
 import { purchaseCategory } from "./src/shopping";
 type Tab =
+  | "Grocery & Restock Rotation"
   | "Chore Tracker"
   | "Overview"
   | "Shopping"
@@ -104,6 +106,7 @@ type Tab =
 const tabs: { name: Tab; icon: IconName }[] = [
   { name: "Overview", icon: "Home" },
   { name: "Shopping", icon: "ShoppingBasket" },
+  { name: "Grocery & Restock Rotation", icon: "CalendarDays" },
   { name: "Chore Tracker", icon: "CheckCircle2" },
   { name: "Purchases", icon: "Receipt" },
   { name: "Balances", icon: "Wallet" },
@@ -201,6 +204,7 @@ function Main() {
   const [tab, setTab] = useState<Tab>("Overview");
   const [editor, setEditor] = useState<Expense | null | undefined>(undefined);
   const [detail, setDetail] = useState<Expense | null>(null);
+  const [groceryTripId, setGroceryTripId] = useState<string | null>(null);
   const [shoppingToLog, setShoppingToLog] = useState<ShoppingItem | null>(null);
   const [repayOpen, setRepayOpen] = useState(false);
   const [receipt, setReceipt] = useState<string | null>(null);
@@ -217,6 +221,7 @@ function Main() {
     setTab("Overview");
     setEditor(undefined);
     setShoppingToLog(null);
+    setGroceryTripId(null);
     setDetail(null);
     setRepayOpen(false);
     setReceipt(null);
@@ -501,6 +506,9 @@ function Main() {
               {tab === "Overview" && (
                 <>
                   <UpcomingPayments onManage={() => setTab("Balances")} />
+                  <GroceryNextCard
+                    onOpen={() => setTab("Grocery & Restock Rotation")}
+                  />
                   <View
                     style={[
                       s.between,
@@ -929,6 +937,22 @@ function Main() {
                   </View>
                 </>
               )}
+              {tab === "Grocery & Restock Rotation" && (
+                <GroceryRotation
+                  onShopping={() => setTab("Shopping")}
+                  onPurchase={(item) => {
+                    setGroceryTripId(null);
+                    setShoppingToLog(item);
+                    setEditor(null);
+                  }}
+                  onTripExpense={(id) => {
+                    setShoppingToLog(null);
+                    setGroceryTripId(id);
+                    setEditor(null);
+                  }}
+                  onOpenExpense={setDetail}
+                />
+              )}
               {tab === "Chore Tracker" && <ChoreTracker />}
               {tab === "Shopping" && (
                 <ShoppingList
@@ -1004,7 +1028,11 @@ function Main() {
                       fontFamily: tab === t.name ? "DMBold" : "DM",
                     }}
                   >
-                    {t.name === "Chore Tracker" ? "Chores" : t.name}
+                    {t.name === "Chore Tracker"
+                      ? "Chores"
+                      : t.name === "Grocery & Restock Rotation"
+                        ? "Rotation"
+                        : t.name}
                   </Txt>
                 </Pressable>
               ))}
@@ -1056,13 +1084,16 @@ function Main() {
         <PurchaseEditor
           expense={editor}
           shoppingItem={shoppingToLog || undefined}
+          groceryTripId={groceryTripId || undefined}
           onClose={() => {
             setEditor(undefined);
             setShoppingToLog(null);
+            setGroceryTripId(null);
           }}
           onSaved={() => {
             setEditor(undefined);
             setShoppingToLog(null);
+            setGroceryTripId(null);
             notify("Purchase saved. Everyone’s share is accounted for.");
           }}
         />
@@ -1529,11 +1560,13 @@ function Balances({ onRepay }: { onRepay: () => void }) {
 function PurchaseEditor({
   expense,
   shoppingItem,
+  groceryTripId,
   onClose,
   onSaved,
 }: {
   expense: Expense | null;
   shoppingItem?: ShoppingItem;
+  groceryTripId?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1543,13 +1576,26 @@ function PurchaseEditor({
   const [oneTime, setOneTime] = useState(
     Boolean(expense?.one_time ?? shoppingItem?.one_time),
   );
-  const [name, setName] = useState(expense?.name || shoppingItem?.name || ""),
+  const [name, setName] = useState(
+      expense?.name ||
+        shoppingItem?.name ||
+        (groceryTripId ? "Grocery trip" : ""),
+    ),
     [amount, setAmount] = useState(
       expense ? (expense.cents / 100).toFixed(2) : "",
     ),
     [date, setDate] = useState(expense?.date || today()),
     [store, setStore] = useState(expense?.store || ""),
-    [notes, setNotes] = useState(expense?.notes || ""),
+    [notes, setNotes] = useState(
+      expense?.notes ||
+        (shoppingItem
+          ? st.grocery.essentials.find(
+              (e: { shoppingId: string | null }) =>
+                e.shoppingId === shoppingItem.id,
+            )?.notes
+          : "") ||
+        "",
+    ),
     [category, setCategory] = useState(
       expense?.category ||
         (shoppingItem ? purchaseCategory(shoppingItem.category) : "Groceries"),
@@ -1769,6 +1815,7 @@ function PurchaseEditor({
         id,
         one_time: oneTime,
         household_id: st.household!.id,
+        grocery_trip_id: expense?.grocery_trip_id || groceryTripId || null,
         name: name.trim(),
         cents,
         receipt_details: itemized ? receiptDetails : null,

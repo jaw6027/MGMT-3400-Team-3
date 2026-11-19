@@ -150,3 +150,59 @@ describe("local support knowledge", () => {
     );
   });
 });
+
+describe("brief support questions", () => {
+  it.each([
+    ["money", "balances"],
+    ["pay", "paid"],
+    ["bought", "bought"],
+    ["who next", "groceryRotation"],
+    ["rent?", "split"],
+    ["bills", "split"],
+    ["expenses", "history"],
+    ["owe", "balances"],
+    ["groceries", "shopping"],
+    ["list", "shopping"],
+    ["rotation", "groceryRotation"],
+    ["my turn?", "groceryRotation"],
+    ["next", "groceryRotation"],
+    ["who's next", "groceryRotation"],
+    ["done", "groceryRotation"],
+    ["swap", "grocerySwap"],
+    ["skip", "grocerySwap"],
+    ["low", "restock"],
+    ["supplies", "restock"],
+    ["restock", "restock"],
+    ["invite", "invite"],
+    ["code", "invite"],
+    ["roommates", "invite"],
+    ["join", "join"],
+    ["price", "plans"],
+    ["free", "plans"],
+    ["cost?", "plans"],
+    ["premium", "plans"],
+    ["help with rent", "split"],
+    ["shopping?", "shopping"],
+    ["chores", "chores"],
+    ["password", "password"],
+    ["settings", "profile"],
+    ["support", "contact"],
+    ["broken", "trouble"],
+    ["groceris", "shopping"],
+    ["restok", "restock"],
+    ["invte", "invite"],
+  ])("understands %s as %s", (q, id) =>
+    expect(answerSupport(q).topic).toBe(id),
+  );
+  it("uses context for short follow-ups and never performs the requested action", () => {
+    expect(answerSupport("how?", "restock").topic).toBe("restock");
+    expect(answerSupport("cancel", "plans").topic).toBe("cancel");
+    expect(answerSupport("cancel", "grocerySwap").topic).toBe("grocerySwap");
+    expect(answerSupport("edit", "history").topic).toBe("edit");
+    expect(answerSupport("cancel").text).toContain("Could you rephrase");
+    expect(answerSupport("done").text).toContain("choose Mark turn complete");
+    expect(answerSupport("stock prices tomorrow").text).toContain(
+      "Could you rephrase",
+    );
+  });
+});

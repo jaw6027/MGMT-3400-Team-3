@@ -1,4 +1,16 @@
 import {
+  applyGrocery,
+  emptyGrocery,
+  syncGroceryShopping,
+  groceryLocalLock,
+  groceryEssentialFor,
+  checkGroceryPurchase,
+  checkGroceryTripExpense,
+  completeGroceryRestock,
+  reopenDeletedGroceryPurchase,
+  GroceryState,
+} from "./grocery";
+import {
   canonicalChoreName,
   validateChore,
   makeChoreCompletion,
@@ -42,6 +54,7 @@ type User = {
 };
 type PreviewMember = Member & { household_id: string };
 type Database = {
+  groceryStates?: Record<string, GroceryState>;
   shoppingItems?: ShoppingItem[];
   chores?: Chore[];
   choreCompletions?: ChoreCompletion[];
@@ -123,7 +136,8 @@ async function initial(): Promise<Database> {
 export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
   let queue = Promise.resolve();
   const serial = <T>(job: () => Promise<T>): Promise<T> => {
-    const next = queue.then(job, job);
+    const run = () => groceryLocalLock(job);
+    const next = queue.then(run, run);
     queue = next.then(
       () => {},
       () => {},
@@ -157,6 +171,7 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
     return m;
   };
   const ensureMemberHouses = (db: Database) => {
+    db.groceryStates ||= {};
     db.shoppingItems ||= [];
     db.chores ||= [];
     db.choreCompletions ||= [];
@@ -254,6 +269,36 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
           url.searchParams.get(name)?.replace(/^eq\./, "");
         if (path.startsWith("/rest/v1/rpc/")) {
           const name = path.split("/").pop();
+          if (name === "grocery_snapshot" || name === "grocery_apply") {
+            const house = payload.household_id;
+            requireHouse(db, user.id, house);
+            let d = {
+              household: db.households.find((h) => h.id === house)!,
+              members: db.members.filter((m) => m.household_id === house),
+              expenses: db.expenses.filter((e) => e.household_id === house),
+              repayments: [],
+              shoppingItems: db.shoppingItems!.filter(
+                (i) => i.household_id === house,
+              ),
+              grocery: db.groceryStates![house] || emptyGrocery(),
+            };
+            const next =
+              name === "grocery_apply"
+                ? applyGrocery(
+                    d,
+                    user.id,
+                    payload.command,
+                    payload.expected_version,
+                  )
+                : syncGroceryShopping(d);
+            db.groceryStates![house] = next.grocery!;
+            db.shoppingItems = [
+              ...db.shoppingItems!.filter((i) => i.household_id !== house),
+              ...(next.shoppingItems || []),
+            ];
+            await save(db);
+            return json(next.grocery);
+          }
           if (name === "propose_cash_payment") {
             const r = payload.payload as Repayment;
             requireHouse(db, user.id, r.household_id);
@@ -493,6 +538,15 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
           if (name === "save_shopping_item") {
             const item = payload.payload as ShoppingItem;
             requireHouse(db, user.id, item.household_id);
+            if (
+              groceryEssentialFor(
+                { grocery: db.groceryStates![item.household_id] } as any,
+                item.id,
+              )
+            )
+              throw new Error(
+                "Edit this essential in Grocery & Restock Rotation.",
+              );
             const old = db.shoppingItems!.find((s) => s.id === item.id);
             if (old && old.household_id !== item.household_id)
               throw new Error(
@@ -525,6 +579,16 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
             return json(item.id);
           }
           if (name === "delete_shopping_item") {
+            if (
+              active &&
+              groceryEssentialFor(
+                { grocery: db.groceryStates![active.household_id] } as any,
+                payload.shopping_id,
+              )
+            )
+              throw new Error(
+                "This item is on the shared restocking list. Record its purchase or update the essential.",
+              );
             const item = db.shoppingItems!.find(
               (s) => s.id === payload.shopping_id,
             );
@@ -557,6 +621,16 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
                   "This shopping item is not available to your household.",
                 );
               if (planned.expense_id === e.id) return json(e.id);
+              checkGroceryPurchase(
+                {
+                  grocery: db.groceryStates![e.household_id],
+                  members: db.members.filter(
+                    (m) => m.household_id === e.household_id,
+                  ),
+                } as any,
+                user.id,
+                planned.id,
+              );
               if (planned.expense_id)
                 throw new Error(
                   "This shopping item already has a recorded purchase. Refresh the list.",
@@ -573,6 +647,18 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               e.one_time ??= planned.one_time;
             }
             const old = db.expenses.find((x) => x.id === e.id);
+            e.grocery_trip_id ??= old?.grocery_trip_id;
+            if (e.grocery_trip_id && e.grocery_trip_id !== old?.grocery_trip_id)
+              checkGroceryTripExpense(
+                {
+                  grocery: db.groceryStates![e.household_id],
+                  members: db.members.filter(
+                    (m) => m.household_id === e.household_id,
+                  ),
+                } as any,
+                user.id,
+                e,
+              );
             if (
               old &&
               (old.household_id !== e.household_id ||
@@ -614,6 +700,21 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               { ...e, created_at: old?.created_at || new Date().toISOString() },
               ...db.expenses.filter((x) => x.id !== e.id),
             ];
+            if (planned) {
+              const next = completeGroceryRestock(
+                {
+                  grocery: db.groceryStates![e.household_id],
+                  members: db.members.filter(
+                    (m) => m.household_id === e.household_id,
+                  ),
+                } as any,
+                planned.id,
+                e,
+                user.id,
+              );
+              if (next.grocery)
+                db.groceryStates![e.household_id] = next.grocery;
+            }
             await save(db);
             return json(e.id);
           }
@@ -628,6 +729,15 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               throw new Error(
                 "Only the roommate who paid can delete this purchase.",
               );
+            const reopened = reopenDeletedGroceryPurchase(
+              {
+                grocery: db.groceryStates![e.household_id],
+                shoppingItems: db.shoppingItems,
+              } as any,
+              e.id,
+            );
+            if (reopened.grocery)
+              db.groceryStates![e.household_id] = reopened.grocery;
             db.expenses = db.expenses.filter(
               (e) => e.id !== payload.expense_id,
             );

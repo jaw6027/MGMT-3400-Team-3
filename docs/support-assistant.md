@@ -21,7 +21,7 @@ Edit **src/supportKnowledge.ts**:
 
 When approved plans become real, fill in confirmed details **and update the related answers to describe the actual implemented flows**. Remove the current “not configured” language only after those flows exist; do not simply enter a price and leave contradictory placeholders. Never promise retention or household sharing without a defined policy. The current demo is available without payment, but that does not define a future free plan.
 
-When adding topics, put their IDs in the intent priority order, add real-user phrasing tests, and ensure suggested questions resolve. Destinations use a restricted type matching the six existing app sections. This is an on-device support system, not a general-purpose generative assistant; unfamiliar phrasing may need a new pattern.
+When adding topics, put their IDs in the intent priority order, add real-user phrasing tests, and ensure suggested questions resolve. Destinations use a restricted type matching the seven existing app sections. This is an on-device support system, not a general-purpose generative assistant; unfamiliar phrasing may need a new pattern.
 
 **src/SupportChat.tsx** owns the responsive chat UI, session, input, typing status and shortcuts. **App.tsx** mounts it per account/household and connects shortcuts to the existing tab state. No provider, backend, schema, payment or subscription logic was changed.
 
@@ -38,7 +38,7 @@ npm run build:preview
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:e2e:preview
 ```
 
-Use your installed Chromium path, or omit the variable after `npx playwright install chromium`. The normal suite runs `e2e/support.spec.ts`; the self-contained preview suite runs `e2e/support-preview.spec.ts`. Both use shared browser scenarios from `e2e/supportFlows.ts`. Unit coverage in `src/supportKnowledge.test.ts` checks over 50 different questions, context, unsupported requests, subscription honesty and every suggested follow-up. Browser coverage checks phone/desktop sizing, open/close/reopen, typing, session continuity, navigation to all six sections and continued purchase-editor operation. Preview coverage also checks pre-login help and account-change isolation.
+Use your installed Chromium path, or omit the variable after `npx playwright install chromium`. The normal suite runs `e2e/support.spec.ts`; the self-contained preview suite runs `e2e/support-preview.spec.ts`. Both use shared browser scenarios from `e2e/supportFlows.ts`. Unit coverage in `src/supportKnowledge.test.ts` checks over 50 different questions, context, unsupported requests, subscription honesty and every suggested follow-up. Browser coverage checks phone/desktop sizing, open/close/reopen, typing, session continuity, navigation to all seven sections and continued purchase-editor operation. Preview coverage also checks pre-login help and account-change isolation.
 
 For manual testing, run `npm run web`, or serve `preview/` with a static server after rebuilding. In the packaged demo choose **Open sample household**, open the assistant, and try:
 
@@ -49,3 +49,5 @@ For manual testing, run `npm run web`, or serve `preview/` with a static server 
 5. Close/reopen, resize to phone and desktop, and verify the conversation remains.
 
 Commit the rebuilt **preview/index.html** with the feature. The shared demo is generated; source changes alone do not update it. Fetch immediately before pushing, preserve teammates' changes, rerun affected checks after any integration, and never force-push.
+
+Short help prompts and grocery guidance are also defined in `src/supportKnowledge.ts`. Edit `shortSupport` to add exact brief phrases; the assistant permits a one-character typo only when it leads unambiguously to one topic. Context resolves short follow-ups such as “how?” or “cancel” where the previous topic makes the meaning clear. Grocery, swap and restock answers link to the existing Grocery & Restock Rotation screen. See [the grocery feature guide](grocery-rotation.md).

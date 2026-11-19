@@ -90,11 +90,16 @@ export function supportFlows(preview: boolean) {
       await expect(page.getByText(/Yes — use exact amounts/)).toBeVisible();
       await ask(page, "What is tomorrow's weather?");
       await expect(page.getByText(/Could you rephrase/)).toBeVisible();
-      await page
-        .getByRole("button", { name: "Find a Feature", exact: true })
-        .click();
+      await ask(page, "restok");
+      await expect(
+        page.getByText(
+          /Only the assigned restocker can choose Mark as Purchased/,
+        ),
+      ).toBeVisible();
+      await ask(page, "help");
       await expect(page.getByText(/Here’s your map/)).toBeVisible();
       const destinations = [
+        ["Grocery & Restock Rotation", "Grocery & Restock Rotation"],
         ["Shopping", "Household shopping list"],
         ["Chore Tracker", "Chore Tracker"],
         ["Household", "Your profile"],

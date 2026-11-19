@@ -274,3 +274,95 @@ describe("self-contained browser rehearsal backend", () => {
     await second.auth.signOut();
   });
 });
+
+it("persists grocery rotations, serializes competing writes, deduplicates restocks and honors real preview-account agreement", async () => {
+  await sample();
+  const house = "demo-house",
+    day = new Date().toISOString().slice(0, 10);
+  let r = await client.rpc("grocery_apply", {
+    household_id: house,
+    expected_version: 0,
+    command: {
+      id: randomUUID(),
+      kind: "configure",
+      participants: ["alex", "jordan", "sam"],
+      days: 7,
+      due: day,
+      mode: "grocery",
+      restockParticipants: ["alex", "jordan", "sam"],
+      restockDays: 7,
+      restockStart: day,
+    },
+  });
+  expect(r.error).toBeNull();
+  const essential = r.data.essentials[0].id;
+  const low = () =>
+    client.rpc("grocery_apply", {
+      household_id: house,
+      expected_version: 1,
+      command: {
+        id: randomUUID(),
+        kind: "low",
+        essentialId: essential,
+        shoppingId: randomUUID(),
+      },
+    });
+  const reports = await Promise.all([low(), low()]);
+  expect(reports.every((x) => !x.error)).toBe(true);
+  const items = await client
+    .from("shopping_items")
+    .select("*")
+    .eq("household_id", house);
+  expect(items.data).toHaveLength(1);
+  expect(items.data![0].assigned_to).toBe("alex");
+  const swap = randomUUID();
+  r = await client.rpc("grocery_apply", {
+    household_id: house,
+    expected_version: 2,
+    command: { id: swap, kind: "requestSwap", target: "jordan" },
+  });
+  expect(r.error).toBeNull();
+  const resolve = () =>
+    client.rpc("grocery_apply", {
+      household_id: house,
+      expected_version: 3,
+      command: {
+        id: randomUUID(),
+        kind: "resolveSwap",
+        swapId: swap,
+        decision: "accept",
+      },
+    });
+  expect((await resolve()).error?.message).toMatch(/invited/);
+  await client.auth.signOut();
+  await client.auth.signInWithPassword({
+    email: "jordan@splitcart.demo",
+    password: previewSamplePassword,
+  });
+  expect((await resolve()).error).toBeNull();
+  const complete = () =>
+    client.rpc("grocery_apply", {
+      household_id: house,
+      expected_version: 4,
+      command: { id: randomUUID(), kind: "complete" },
+    });
+  const results = await Promise.all([complete(), complete()]);
+  expect(results.filter((x) => !x.error)).toHaveLength(1);
+  expect(results.find((x) => x.error)?.error?.message).toMatch(/changed/);
+  const saved = await client.rpc("grocery_snapshot", { household_id: house });
+  expect(saved.data.rotation.queue).toEqual(["alex", "sam", "jordan"]);
+  expect(
+    saved.data.history.filter((e: any) => e.kind === "complete"),
+  ).toHaveLength(1);
+  expect([...values.values()].join("")).toContain(swap);
+  await client.auth.signUp({
+    email: "other-grocery@example.test",
+    password: "made-up-password",
+    options: { data: { name: "Other" } },
+  });
+  await setup("create", "Other grocery household");
+  expect(
+    (await client.rpc("grocery_snapshot", { household_id: house })).error
+      ?.message,
+  ).toMatch(/not available/);
+});

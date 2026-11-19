@@ -139,6 +139,14 @@ async function backend(page: Page) {
           await respond(r.rows[0].id);
           return;
         }
+        if (name === "grocery_snapshot") {
+          const result = await db.query<any>(
+            "select grocery_snapshot($1) as state",
+            [body.household_id],
+          );
+          await respond(result.rows[0].state);
+          return;
+        }
         if (name === "rename_household") {
           await db.query("select rename_household($1,$2)", [
             body.household_id,

@@ -1,3 +1,4 @@
+import { groceryEssentialFor, restockOwner } from "./grocery";
 import React, { useRef, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import type { Expense, ShoppingItem } from "./core";
@@ -32,6 +33,8 @@ export default function ShoppingList({
   onOpenPurchase: (expense: Expense) => void;
 }) {
   const st = useStore();
+  const currentMember = st.members.find((m) => m.user_id === st.user?.id);
+
   const [adding, setAdding] = useState(false),
     [editing, setEditing] = useState<ShoppingItem | null>(null),
     [custom, setCustom] = useState(false),
@@ -222,6 +225,10 @@ export default function ShoppingList({
                 .filter((i) => i.category === c)
                 .sort((a, b) => b.created_at.localeCompare(a.created_at))
                 .map((item) => {
+                  const essential = groceryEssentialFor(st, item.id);
+                  const restocker = essential
+                    ? restockOwner(st.grocery, essential, st.members)
+                    : null;
                   const expense = linked(item),
                     previous = lastShoppingPurchase(
                       item,
@@ -255,6 +262,17 @@ export default function ShoppingList({
                           ? `${purchaser?.name || "Former roommate"} bought this · ${expense.date} · ${money(expense.cents, st.household?.currency)}`
                           : `Assigned to ${purchaser?.name || "Former roommate"}${purchaser?.left_at ? " · Reassign before buying" : ""}`}
                       </Txt>
+                      {essential && (
+                        <Txt style={{ fontSize: 12, color: C.green }}>
+                          Restock essential
+                          {essential.notes ? ` · ${essential.notes}` : ""}
+                          {essential.quantity
+                            ? ` · Remaining: ${essential.quantity}`
+                            : ""}
+                          . Responsibility to shop is separate from expense
+                          shares.
+                        </Txt>
+                      )}
                       {!expense && previous && (
                         <Txt style={{ fontSize: 12, color: C.green }}>
                           Last bought by{" "}
@@ -300,30 +318,43 @@ export default function ShoppingList({
                           <>
                             <Button
                               small
-                              label="Log purchase"
-                              accessibilityLabel={`Log ${item.name} purchase`}
+                              label={
+                                essential ? "Mark as Purchased" : "Log purchase"
+                              }
+                              accessibilityLabel={
+                                essential
+                                  ? `Mark ${item.name} as purchased`
+                                  : `Log ${item.name} purchase`
+                              }
+                              disabled={Boolean(
+                                essential && restocker !== currentMember?.id,
+                              )}
                               icon="Check"
                               onPress={() => onPurchase(item)}
                             />
-                            <Button
-                              secondary
-                              small
-                              label="Edit"
-                              accessibilityLabel={`Edit ${item.name}`}
-                              icon="Pencil"
-                              onPress={() => start(item, true)}
-                            />
-                            <Button
-                              secondary
-                              small
-                              label="Remove"
-                              accessibilityLabel={`Remove ${item.name}`}
-                              icon="Trash2"
-                              onPress={() => {
-                                setError("");
-                                setRemove(item);
-                              }}
-                            />
+                            {!essential && (
+                              <>
+                                <Button
+                                  secondary
+                                  small
+                                  label="Edit"
+                                  accessibilityLabel={`Edit ${item.name}`}
+                                  icon="Pencil"
+                                  onPress={() => start(item, true)}
+                                />
+                                <Button
+                                  secondary
+                                  small
+                                  label="Remove"
+                                  accessibilityLabel={`Remove ${item.name}`}
+                                  icon="Trash2"
+                                  onPress={() => {
+                                    setError("");
+                                    setRemove(item);
+                                  }}
+                                />
+                              </>
+                            )}
                           </>
                         )}
                       </View>

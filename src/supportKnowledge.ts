@@ -1,5 +1,6 @@
 /** Editable, local support content. No network calls or access to household data. */
 export type SupportDestination =
+  | "Grocery & Restock Rotation"
   | "Overview"
   | "Shopping"
   | "Chore Tracker"
@@ -31,6 +32,37 @@ const plans = () =>
   `Subscription details — not yet defined in this demo.\n\nDemo access: you can try expenses, balances, shopping, chores and simulated payments without a paid plan. This is not a published free-tier entitlement.\nFree plan: ${subscriptionInfo.freeFeatures ?? "placeholder — features not yet defined"}.\nPremium: ${subscriptionInfo.monthlyPrice ?? "price not yet defined"}; ${subscriptionInfo.premiumFeatures ?? "benefits not yet defined"}.\n\nNo $6.99 subscription or upgrade checkout is currently configured. Payment-method demos and the credit-card surcharge are separate from an app subscription.`;
 
 export const supportTopics: SupportTopic[] = [
+  {
+    id: "groceryRotation",
+    question: "Who's up next?",
+    patterns: [
+      /\b(who s up next|who s next|whose turn|my turn|grocery rotation|grocery schedule|shopping schedule|grocery trips?|shopping turns?)\b/,
+    ],
+    answer:
+      "Open Grocery & Restock Rotation (Rotation on phone navigation). Who’s up next shows the current shopper, next roommate and upcoming dates. Create grocery rotation lets you choose participants and a weekly, every-two-weeks or custom 1–365-day interval.\n\nWhen it’s your turn and the date has started, choose Mark turn complete and confirm. The next roommate is assigned automatically. Completing a trip records your responsibility; it does not create a bill or mark individual supplies purchased. Use Record shared grocery expense in the trip history to enter the real amount and choose the payer and shares.",
+    destination: "Grocery & Restock Rotation",
+    followUps: ["Swap my turn", "Restock supplies"],
+  },
+  {
+    id: "grocerySwap",
+    question: "Swap my turn",
+    patterns: [/\b(swap|skip|unavailable|can t shop|cannot shop|can t make)\b/],
+    answer:
+      "Open Rotation → Who’s up next. The current shopper can choose Swap Turn, pick another participant and Request turn swap. Your assignment stays the same until that roommate signs into their own account and selects Accept turn swap. They can decline; you can cancel a pending request. An accepted swap exchanges your positions.\n\nSkip my turn instead moves you to the end of the queue and assigns the next person with the same due date. Skips do not count as completed trips. Schedule edits, completion or skips expire pending swaps. Preview accounts can demonstrate both sides only in the same browser; normal demo mode has just the Alex account.",
+    destination: "Grocery & Restock Rotation",
+    followUps: ["Who's up next?", "Restock supplies"],
+  },
+  {
+    id: "restock",
+    question: "Restock supplies",
+    patterns: [
+      /\b(restock|restocking|running low|toilet paper|paper towels|dish soap|laundry detergent|trash bags|hand soap|essentials)\b/,
+    ],
+    answer:
+      "Open Rotation → Household essentials. Any roommate can select Running Low. It reuses or adds one matching planned item in the existing Shopping list, with the assigned shopper and your preferred-brand/quantity notes. Edit details lets you record remaining quantity; Add custom essential adds your own supplies.\n\nOption A assigns low supplies to the grocery shopper. Option B rotates each item’s responsibility across separate participants on a date-based schedule. Only the assigned restocker can choose Mark as Purchased; the existing expense form records the amount, actual payer and split. Saving clears Running Low and records the purchase date. It does not send money or complete the grocery trip.",
+    destination: "Grocery & Restock Rotation",
+    followUps: ["Who's up next?", "How do shared shopping lists work?"],
+  },
   {
     id: "plans",
     question: "Subscription Plans",
@@ -447,7 +479,7 @@ export const supportTopics: SupportTopic[] = [
       /\b(find a feature|navigation|navigate|where do i go|screens|help|hello|hi|hey|thanks|thank you)\b/,
     ],
     answer:
-      "Here’s your map:\n• Overview: dashboard and recent purchases.\n• Purchases: add, search and view expenses.\n• Balances: debts, repayments and Manage payments.\n• Shopping: planned items and purchase history.\n• Chore Tracker: assignments and completion history.\n• Household: invitations, profile and settings.\n\nChoose a section below, or ask me what you’d like to do.",
+      "Here’s your map:\n• Overview: dashboard and recent purchases.\n• Purchases: add, search and view expenses.\n• Balances: debts, repayments and Manage payments.\n• Shopping: planned items and purchase history.\n• Chore Tracker: assignments and completion history.\n• Household: invitations, profile and settings.\n• Grocery & Restock Rotation: shopping turns, essentials and agreed swaps.\n\nChoose a section below, or ask me what you’d like to do.",
     followUps: ["How to Split a Bill", "How do shared shopping lists work?"],
   },
 ];
@@ -465,6 +497,149 @@ const normalize = (s: string) =>
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+// Short prompts deliberately map to a guide, never to an account/payment action.
+const shortSupport: Record<string, string> = {
+  bill: "split",
+  bills: "split",
+  rent: "split",
+  expense: "split",
+  "add expense": "split",
+  "split bill": "split",
+  expenses: "history",
+  purchases: "history",
+  history: "history",
+  money: "balances",
+  owe: "balances",
+  debt: "balances",
+  balance: "balances",
+  balances: "balances",
+  paid: "paid",
+  payment: "paid",
+  payments: "paid",
+  pay: "paid",
+  repay: "paid",
+  shopping: "shopping",
+  groceries: "shopping",
+  grocery: "shopping",
+  list: "shopping",
+  items: "shopping",
+  "add item": "shopping",
+  bought: "bought",
+  purchased: "bought",
+  "shopping list": "shopping",
+  rotation: "groceryRotation",
+  schedule: "groceryRotation",
+  turn: "groceryRotation",
+  "my turn": "groceryRotation",
+  next: "groceryRotation",
+  "who s next": "groceryRotation",
+  "who next": "groceryRotation",
+  "whos next": "groceryRotation",
+  "who s up next": "groceryRotation",
+  done: "groceryRotation",
+  complete: "groceryRotation",
+  swap: "grocerySwap",
+  skip: "grocerySwap",
+  restock: "restock",
+  supplies: "restock",
+  low: "restock",
+  "running low": "restock",
+  invite: "invite",
+  code: "invite",
+  roommate: "invite",
+  roommates: "invite",
+  join: "join",
+  signup: "account",
+  account: "account",
+  household: "setup",
+  chores: "chores",
+  chore: "chores",
+  reminders: "reminders",
+  profile: "profile",
+  settings: "profile",
+  password: "password",
+  reset: "password",
+  price: "plans",
+  pricing: "plans",
+  cost: "plans",
+  free: "plans",
+  premium: "plans",
+  subscription: "plans",
+  plans: "plans",
+  upgrade: "upgrade",
+  support: "contact",
+  broken: "trouble",
+  error: "trouble",
+  help: "navigation",
+  where: "navigation",
+  safe: "security",
+};
+function shortTopic(q: string, previous?: string | null): string | undefined {
+  const prompt = q
+    .replace(
+      /^(please |help (me )?(with )?|what about |how about |how (do i|to) |where (is|are) (my|the) )/,
+      "",
+    )
+    .replace(/ please$/, "");
+  if (
+    [
+      "how",
+      "how do i",
+      "where is it",
+      "more",
+      "details",
+      "that",
+      "it",
+    ].includes(prompt) &&
+    previous
+  )
+    return previous;
+  if (
+    ["cancel", "change it", "cancel it"].includes(prompt) &&
+    previous &&
+    ["plans", "upgrade", "cancel", "cancelData", "sharingPlan"].includes(
+      previous,
+    )
+  )
+    return prompt.startsWith("change") ? "upgrade" : "cancel";
+  if (
+    prompt === "cancel" &&
+    previous &&
+    ["groceryRotation", "grocerySwap"].includes(previous)
+  )
+    return "grocerySwap";
+  if (
+    ["edit", "delete", "change"].includes(prompt) &&
+    previous &&
+    ["split", "history", "edit"].includes(previous)
+  )
+    return "edit";
+  if (shortSupport[prompt]) return shortSupport[prompt];
+  // One missing/extra/wrong character in a single help keyword, only if unambiguous.
+  if (!/^[a-z]{4,16}$/.test(prompt)) return undefined;
+  const distance = (a: string, b: string) => {
+    let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const next = [i];
+      for (let j = 1; j <= b.length; j++)
+        next[j] = Math.min(
+          next[j - 1] + 1,
+          row[j] + 1,
+          row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+        );
+      row = next;
+    }
+    return row[b.length];
+  };
+  const matches = [
+    ...new Set(
+      Object.keys(shortSupport)
+        .filter((key) => !key.includes(" ") && distance(prompt, key) === 1)
+        .map((key) => shortSupport[key]),
+    ),
+  ];
+  return matches.length === 1 ? matches[0] : undefined;
+}
 export function answerSupport(
   question: string,
   previousTopic?: string | null,
@@ -472,6 +647,9 @@ export function answerSupport(
   const q = normalize(question);
   // Specific matches override broad terms such as "subscription" or "balance".
   const priority = [
+    "grocerySwap",
+    "restock",
+    "groceryRotation",
     "cancelData",
     "sharingPlan",
     "upgrade",
@@ -509,6 +687,8 @@ export function answerSupport(
   let topic = priority
     .map((id) => supportTopics.find((t) => t.id === id)!)
     .find((t) => t.patterns.some((p) => p.test(q)));
+  const brief = shortTopic(q, previousTopic);
+  if (brief) topic = supportTopics.find((t) => t.id === brief);
   const previous = supportTopics.find((t) => t.id === previousTopic);
   // Resolve explicit contextual follow-ups without guessing about unrelated questions.
   if (
@@ -542,7 +722,7 @@ export function answerSupport(
   if (!topic)
     return {
       topic: previousTopic ?? null,
-      text: "I’m not sure which feature you mean. Could you rephrase that with the screen or task, such as ‘split rent’ or ‘find my shopping list’? I can help with expenses, households, shopping, chores, subscription details and troubleshooting. I can explain steps, but cannot perform account or payment actions.",
+      text: "I’m not sure which feature you mean. Could you rephrase that with the screen or task, such as ‘split rent’ or ‘find my shopping list’? I can help with expenses, households, shopping, chores, subscription details, grocery turns, restocking and troubleshooting. I can explain steps, but cannot perform account or payment actions.",
       followUps: ["Find a Feature", "How do I contact support?"],
     };
   return {

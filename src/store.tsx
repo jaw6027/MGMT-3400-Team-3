@@ -1,4 +1,17 @@
 import {
+  applyGrocery,
+  emptyGrocery,
+  syncGroceryShopping,
+  groceryLocalLock,
+  groceryEssentialFor,
+  checkGroceryPurchase,
+  checkGroceryTripExpense,
+  completeGroceryRestock,
+  reopenDeletedGroceryPurchase,
+  GroceryCommand,
+  GroceryState,
+} from "./grocery";
+import {
   canonicalChoreName,
   validateChore,
   makeChoreCompletion,
@@ -116,8 +129,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
   const dataRef = useRef(data);
   dataRef.current = data;
   const refresh = async () => {
-    const d = await loadData();
+    const raw = demo ? await AsyncStorage.getItem("splitcart-demo-v1") : null;
+    const d = demo ? (raw ? JSON.parse(raw) : demoData()) : await loadData();
     setData(d);
+    dataRef.current = d;
   };
   useEffect(() => {
     let alive = true;
@@ -238,38 +253,100 @@ export function Provider({ children }: { children: React.ReactNode }) {
     setData(d);
     dataRef.current = d;
   };
+  const mutateDemoShopping = async (update: (latest: Data) => Data) => {
+    const house = dataRef.current.household?.id;
+    await groceryLocalLock(async () => {
+      const raw = await AsyncStorage.getItem("splitcart-demo-v1");
+      const latest: Data = raw ? JSON.parse(raw) : dataRef.current;
+      if (latest.household?.id !== house)
+        throw new Error("The active household changed. Refresh and try again.");
+      await persist(syncGroceryShopping(update(latest)));
+    });
+  };
+  const groceryAction = async (command: GroceryCommand, version: number) => {
+    const house = dataRef.current.household?.id;
+    if (!house || !user) throw new Error("Join a household first.");
+    if (demo)
+      await groceryLocalLock(async () => {
+        const raw = await AsyncStorage.getItem("splitcart-demo-v1");
+        const latest: Data = raw ? JSON.parse(raw) : dataRef.current;
+        if (latest.household?.id !== house)
+          throw new Error(
+            "The active household changed. Refresh and try again.",
+          );
+        await persist(applyGrocery(latest, user.id, command, version));
+      });
+    else {
+      const { error } = await client().rpc("grocery_apply", {
+        household_id: house,
+        command,
+        expected_version: version,
+      });
+      if (error) {
+        await refresh();
+        throw error;
+      }
+      await refresh();
+    }
+  };
   const saveExpense = async (e: Expense, shoppingId?: string) => {
     validateExpense(e, dataRef.current.members);
     const old = dataRef.current.expenses.find((x) => x.id === e.id);
     if (old && !canEdit(user!.id, old, dataRef.current.members))
       throw new Error("Only the roommate who paid can change this purchase.");
-    if (demo) {
-      const list = dataRef.current.shoppingItems || [];
-      const plan = shoppingId
-        ? list.find(
-            (s) => s.id === shoppingId && s.household_id === e.household_id,
-          )
-        : null;
-      if (shoppingId && !plan)
-        throw new Error("This shopping item is not available.");
-      if (plan?.expense_id && plan.expense_id !== e.id)
-        throw new Error(
-          "This shopping item already has a recorded purchase. Refresh the list.",
-        );
-      e = {
-        ...e,
-        one_time: e.one_time ?? old?.one_time ?? plan?.one_time ?? false,
-      };
-      await persist({
-        ...dataRef.current,
-        expenses: [e, ...dataRef.current.expenses.filter((x) => x.id !== e.id)],
-        shoppingItems: list.map((s) =>
-          s.id === shoppingId || s.expense_id === e.id
-            ? { ...s, expense_id: e.id, one_time: Boolean(e.one_time) }
-            : s,
-        ),
+    if (demo)
+      return groceryLocalLock(async () => {
+        const raw = await AsyncStorage.getItem("splitcart-demo-v1");
+        const latest: Data = raw ? JSON.parse(raw) : dataRef.current;
+        if (latest.household?.id !== e.household_id)
+          throw new Error(
+            "The active household changed. Refresh and try again.",
+          );
+        const currentExpense = latest.expenses.find((x) => x.id === e.id);
+        if (
+          currentExpense &&
+          !canEdit(user!.id, currentExpense, latest.members)
+        )
+          throw new Error(
+            "Only the roommate who paid can change this purchase.",
+          );
+        if (
+          e.grocery_trip_id &&
+          e.grocery_trip_id !== currentExpense?.grocery_trip_id
+        )
+          checkGroceryTripExpense(latest, user!.id, e);
+        const list = latest.shoppingItems || [];
+        const plan = shoppingId
+          ? list.find(
+              (s) => s.id === shoppingId && s.household_id === e.household_id,
+            )
+          : null;
+        if (shoppingId && !plan)
+          throw new Error("This shopping item is not available.");
+        if (plan?.expense_id && plan.expense_id !== e.id)
+          throw new Error(
+            "This shopping item already has a recorded purchase. Refresh the list.",
+          );
+        if (plan && !plan.expense_id)
+          checkGroceryPurchase(latest, user!.id, plan.id);
+        e = {
+          ...e,
+          one_time: e.one_time ?? old?.one_time ?? plan?.one_time ?? false,
+        };
+        let next: Data = {
+          ...latest,
+          expenses: [e, ...latest.expenses.filter((x) => x.id !== e.id)],
+          shoppingItems: list.map((s) =>
+            s.id === shoppingId || s.expense_id === e.id
+              ? { ...s, expense_id: e.id, one_time: Boolean(e.one_time) }
+              : s,
+          ),
+        };
+        if (shoppingId && !plan?.expense_id)
+          next = completeGroceryRestock(next, shoppingId, e, user!.id);
+        await persist(syncGroceryShopping(next));
       });
-    } else {
+    else {
       if (shoppingId) {
         const { error } = await client().rpc("save_shopping_purchase", {
           shopping_id: shoppingId,
@@ -284,12 +361,19 @@ export function Provider({ children }: { children: React.ReactNode }) {
     if (!canEdit(user!.id, e, dataRef.current.members))
       throw new Error("Only the roommate who paid can delete this purchase.");
     if (demo)
-      await persist({
-        ...dataRef.current,
-        expenses: dataRef.current.expenses.filter((x) => x.id !== e.id),
-        shoppingItems: (dataRef.current.shoppingItems || []).map((s) =>
-          s.expense_id === e.id ? { ...s, expense_id: null } : s,
-        ),
+      await mutateDemoShopping((latest) => {
+        const current = latest.expenses.find((x) => x.id === e.id);
+        if (current && !canEdit(user!.id, current, latest.members))
+          throw new Error(
+            "Only the roommate who paid can delete this purchase.",
+          );
+        return {
+          ...reopenDeletedGroceryPurchase(latest, e.id),
+          expenses: latest.expenses.filter((x) => x.id !== e.id),
+          shoppingItems: (latest.shoppingItems || []).map((s) =>
+            s.expense_id === e.id ? { ...s, expense_id: null } : s,
+          ),
+        };
       });
     else {
       const { error } = await client().rpc("delete_expense", {
@@ -300,6 +384,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
     }
   };
   const saveShoppingItem = async (item: ShoppingItem) => {
+    if (groceryEssentialFor(dataRef.current, item.id))
+      throw new Error("Edit this essential in Grocery & Restock Rotation.");
     if (item.household_id !== dataRef.current.household?.id)
       throw new Error("Choose an item from this household.");
     validateShoppingItem(item, dataRef.current.members);
@@ -309,18 +395,26 @@ export function Provider({ children }: { children: React.ReactNode }) {
         "Purchased items stay in history. Edit the linked purchase instead.",
       );
     if (demo)
-      await persist({
-        ...dataRef.current,
-        shoppingItems: [
-          {
-            ...item,
-            created_by: old?.created_by || user!.id,
-            created_at: old?.created_at || item.created_at,
-          },
-          ...(dataRef.current.shoppingItems || []).filter(
-            (s) => s.id !== item.id,
-          ),
-        ],
+      await mutateDemoShopping((latest) => {
+        if (groceryEssentialFor(latest, item.id))
+          throw new Error("Edit this essential in Grocery & Restock Rotation.");
+        validateShoppingItem(item, latest.members);
+        const current = latest.shoppingItems?.find((x) => x.id === item.id);
+        if (current?.expense_id)
+          throw new Error(
+            "Purchased items stay in history. Edit the linked purchase instead.",
+          );
+        return {
+          ...latest,
+          shoppingItems: [
+            {
+              ...item,
+              created_by: current?.created_by || user!.id,
+              created_at: current?.created_at || item.created_at,
+            },
+            ...(latest.shoppingItems || []).filter((s) => s.id !== item.id),
+          ],
+        };
       });
     else {
       const { error } = await client().rpc("save_shopping_item", {
@@ -331,17 +425,32 @@ export function Provider({ children }: { children: React.ReactNode }) {
     }
   };
   const deleteShoppingItem = async (id: string) => {
+    if (groceryEssentialFor(dataRef.current, id))
+      throw new Error(
+        "This item is on the shared restocking list. Record its purchase or update the essential.",
+      );
     const item = dataRef.current.shoppingItems?.find((s) => s.id === id);
     if (!item || item.expense_id)
       throw new Error(
         "Only planned items can be removed. Purchased items stay in history.",
       );
     if (demo)
-      await persist({
-        ...dataRef.current,
-        shoppingItems: (dataRef.current.shoppingItems || []).filter(
-          (s) => s.id !== id,
-        ),
+      await mutateDemoShopping((latest) => {
+        if (groceryEssentialFor(latest, id))
+          throw new Error(
+            "This item is on the shared restocking list. Record its purchase or update the essential.",
+          );
+        const current = latest.shoppingItems?.find((x) => x.id === id);
+        if (!current || current.expense_id)
+          throw new Error(
+            "Only planned items can be removed. Purchased items stay in history.",
+          );
+        return {
+          ...latest,
+          shoppingItems: (latest.shoppingItems || []).filter(
+            (s) => s.id !== id,
+          ),
+        };
       });
     else {
       const { error } = await client().rpc("delete_shopping_item", {
@@ -687,7 +796,9 @@ export function Provider({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{
         ...data,
-        shoppingItems: data.shoppingItems || [],
+        shoppingItems: syncGroceryShopping(data).shoppingItems || [],
+        grocery: data.grocery || emptyGrocery(),
+        groceryAction,
         chores: data.chores || [],
         choreCompletions: data.choreCompletions || [],
         saveChore,
@@ -753,6 +864,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
   );
 }
 export function useStore(): Data & {
+  grocery: GroceryState;
+  groceryAction: (command: GroceryCommand, version: number) => Promise<void>;
   recovering: boolean;
   completeRecovery: () => void;
   user: AccountUser | null;

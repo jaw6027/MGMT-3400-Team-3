@@ -29,6 +29,7 @@ const quickQuestions = [
   "Find a Feature",
 ];
 const sections: SupportDestination[] = [
+  "Grocery & Restock Rotation",
   "Overview",
   "Purchases",
   "Balances",

@@ -11,6 +11,7 @@ This is a self-contained export of the actual Expo web app, including:
 - Separate local preview logins and signup; creating/naming a household, copying codes, joining with another account, renaming, profiles, leaving and rejoining.
 - Shopping plans from 61 spreadsheet items, custom expenses, purchaser assignments, last-buyer memory, and one-time flags.
 - **Chore Tracker** with 19 spreadsheet chores, custom chores, recurring schedules, fixed or rotating members, and dated completion history.
+- **Grocery & Restock Rotation** with weekly/custom grocery turns, Who’s up next, agreed swaps, skips, essentials linked to the existing shopping list, in-app reminders and completion/fairness history.
 - Purchases, camera/library receipt attachment, reviewable item lists, automatic item-level shares, external cashback tracking, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
 - Balances, settlement suggestions, manual repayment history, and sample bank/card payments with surcharge previews.
 - Named recurring rent, internet, utility and subscription bills, bank-autopay consent, pause/edit/cancel, reminders and simulated phone verification (code **123456**).
@@ -285,3 +286,9 @@ Deploy migration `202611190006_developer_business.sql` and `developer-business`,
 ## In-app support assistant
 
 Use the floating chat button for **SplitMate Assistant**, SplitCart’s local support guide. It offers step-by-step help, suggested questions and shortcuts to existing screens in both the app and packaged browser demo. No external AI API or paid service is required. Subscription plans/prices and the public support contact are explicitly marked as undefined until the team configures them. See [assistant behavior, editable FAQ content and testing](docs/support-assistant.md).
+
+## Grocery & Restock Rotation
+
+Open **Rotation** on a phone or **Grocery & Restock Rotation** in the sidebar. Choose participants and cadence, see who is next, mark a completed turn, or request an agreed swap. Report essentials as Running Low to place them on the existing shared shopping list with the responsible shopper and shopping notes. Grocery duty and expense shares stay separate. Both demo modes persist changes locally; the browser preview’s separate sample accounts demonstrate swap acceptance in the same browser. Grocery reminders are in-app only.
+
+For live mode, apply `202611190007_grocery_rotation.sql` after prior migrations before deploying. See [demo walkthrough, scheduling rules, storage limitations and tests](docs/grocery-rotation.md). The assistant now also understands short prompts such as “rent,” “owe,” “low,” “swap,” “who’s next,” and contextual “how?”.
