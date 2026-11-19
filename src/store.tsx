@@ -1,3 +1,8 @@
+import {
+  DUPLICATE_MESSAGE,
+  matchingPayment,
+} from "../supabase/functions/_shared/payment-safety";
+import { loadPaymentExperience } from "./paymentStorage";
 import { Linking, Platform } from "react-native";
 import React, {
   createContext,
@@ -288,6 +293,30 @@ export function Provider({ children }: { children: React.ReactNode }) {
       !dataRef.current.members.some((m) => m.id === r.to_id && !m.left_at)
     )
       throw new Error("Record cash you handed to an active roommate.");
+    if (demo || browserPreviewEnabled) {
+      const experience = await loadPaymentExperience(
+        user!.id,
+        r.household_id,
+        true,
+      );
+      const old = (dataRef.current.cashPayments || []).find(
+        (p) => p.id === r.id,
+      );
+      if (
+        !old &&
+        (matchingPayment(experience.payments, r.to_id, r.cents) ||
+          (dataRef.current.cashPayments || []).some(
+            (p) =>
+              p.from_id === r.from_id &&
+              p.to_id === r.to_id &&
+              p.cents === r.cents &&
+              (p.status === "pending" ||
+                (p.status === "confirmed" &&
+                  Date.parse(p.resolved_at || "") > Date.now() - 600000)),
+          ))
+      )
+        throw new Error(DUPLICATE_MESSAGE);
+    }
     if (demo) {
       const old = (dataRef.current.cashPayments || []).find(
         (p) => p.id === r.id,

@@ -37,6 +37,11 @@ let orders: any[] = [],
 let cardBrand = "visa",
   showCatalogCards = false;
 let bankReady = true;
+let exposeBank = false,
+  bankBlocked = false,
+  failureCode: string | null = null;
+let bankHealth = new Map<string, string>();
+let duplicateReservation = false;
 let bankSessionStatus = "complete",
   factorDeleteFails = false;
 let recoveryCodes: any[] = [];
@@ -72,6 +77,11 @@ function assert(value: unknown, message = "Assertion failed"): asserts value {
 }
 function reset() {
   orders = [];
+  duplicateReservation = false;
+  exposeBank = false;
+  bankBlocked = false;
+  failureCode = null;
+  bankHealth.clear();
   requests.length = 0;
   funding = "credit";
   ownMethod = true;
@@ -176,22 +186,39 @@ globalThis.fetch = async (
     if (url.pathname === "/v1/payment_methods")
       return json({
         data:
-          showCatalogCards && url.searchParams.get("type") === "card"
+          exposeBank && url.searchParams.get("type") === "us_bank_account"
             ? [
-                "visa",
-                "mastercard",
-                "amex",
-                "discover",
-                "unionpay",
-                "jcb",
-                "diners",
-              ].map((brand) => ({
-                id: `pm_${brand}`,
-                customer: "cus_user",
-                type: "card",
-                card: { funding: "credit", brand, last4: "4242" },
-              }))
-            : [],
+                {
+                  id: "pm_fixture",
+                  customer: "cus_user",
+                  type: "us_bank_account",
+                  us_bank_account: {
+                    bank_name: "Sample bank",
+                    last4: "6789",
+                    status_details: {
+                      blocked: bankBlocked
+                        ? { reason: "bank_account_closed" }
+                        : null,
+                    },
+                  },
+                },
+              ]
+            : showCatalogCards && url.searchParams.get("type") === "card"
+              ? [
+                  "visa",
+                  "mastercard",
+                  "amex",
+                  "discover",
+                  "unionpay",
+                  "jcb",
+                  "diners",
+                ].map((brand) => ({
+                  id: `pm_${brand}`,
+                  customer: "cus_user",
+                  type: "card",
+                  card: { funding: "credit", brand, last4: "4242" },
+                }))
+              : [],
         has_more: false,
       });
     if (url.pathname.startsWith("/v1/payment_methods/"))
@@ -200,6 +227,13 @@ globalThis.fetch = async (
         customer: ownMethod ? "cus_user" : "cus_someone_else",
         type: funding === "bank" ? "us_bank_account" : "card",
         card: { funding, last4: "4242", brand: cardBrand },
+        us_bank_account: {
+          bank_name: "Sample bank",
+          last4: "6789",
+          status_details: {
+            blocked: bankBlocked ? { reason: "bank_account_closed" } : null,
+          },
+        },
       });
     if (url.pathname.startsWith("/v1/accounts/"))
       return json({
@@ -218,6 +252,9 @@ globalThis.fetch = async (
       return json({
         id: "pi_fixture",
         status: intentStatus,
+        last_payment_error: failureCode
+          ? { code: failureCode, message: "Sensitive raw provider detail" }
+          : null,
         amount: orders[0].cents + orders[0].fee,
         currency: "usd",
         metadata: { order_id: orders[0].id },
@@ -292,6 +329,27 @@ globalThis.fetch = async (
     });
     return json(null);
   }
+  if (table === "record_bank_health") {
+    const key = body.account_user + body.resource_key;
+    const old = bankHealth.get(key);
+    bankHealth.set(key, body.new_state);
+    if (old === body.new_state || (!old && body.new_state === "ready"))
+      return json(null);
+    const id = crypto.randomUUID();
+    notices.push({
+      user_id: body.account_user,
+      event_key: `bank-${id}`,
+      message: body.alert_message,
+    });
+    return json(id);
+  }
+  if (table === "bank_health")
+    return rows(
+      [...bankHealth.keys()]
+        .filter((k) => k.startsWith(userId + "pm_"))
+        .map((k) => ({ resource: k.slice(userId.length) })),
+    );
+  if (table === "bank_health_events") return json(null);
   if (table === "billing_accounts") {
     if (req.method !== "GET") {
       if (req.method === "PATCH") Object.assign(a, body);
@@ -378,6 +436,11 @@ globalThis.fetch = async (
   }
   if (table === "payment_orders") {
     if (req.method === "POST") {
+      if (duplicateReservation)
+        return json(
+          { code: "SC001", message: "Possible duplicate payment" },
+          400,
+        );
       const row = {
         ...body,
         status: "created",
@@ -1335,5 +1398,84 @@ Deno.test(
     reset();
     const unverified = await request({ action: "setup", kind: "bank" });
     assert(unverified.status !== 200);
+  },
+);
+
+Deno.test(
+  "duplicate reservation rejects a fresh reference before contacting Stripe for a charge",
+  async () => {
+    reset();
+    duplicateReservation = true;
+    const response = await request(payment());
+    assert(response.status === 400);
+    assert((await response.json()).error.includes("Possible duplicate"));
+    assert(!requests.some((r) => r.url.pathname === "/v1/payment_intents"));
+  },
+);
+Deno.test(
+  "failed payments expose a curated cause to both participants without raw provider details",
+  async () => {
+    reset();
+    intentStatus = "requires_payment_method";
+    failureCode = "insufficient_funds";
+    const response = await request(payment());
+    const saved = await response.json();
+    assert(
+      response.status === 200 && saved.failure_code === "insufficient_funds",
+    );
+    assert(notices.some((n) => n.message.includes("insufficient funds")));
+    assert(!JSON.stringify(notices).includes("Sensitive raw"));
+  },
+);
+Deno.test(
+  "blocked banks stop payment and bank issues notify once per transition then announce recovery",
+  async () => {
+    reset();
+    exposeBank = true;
+    bankBlocked = true;
+    funding = "bank";
+    const pay = await request({ ...payment(), total: 1000 });
+    assert(pay.status === 400);
+    assert(!requests.some((r) => r.url.pathname === "/v1/payment_intents"));
+    const first = await request({ action: "status" });
+    assert(first.status === 200, await first.clone().text());
+    const state = await first.json();
+    assert(state.bankIssues.some((b: any) => b.state === "blocked"));
+    assert(state.methods[0].issue.includes("cannot make payments"));
+    const count = notices.length;
+    await request({ action: "status" });
+    assert(notices.length === count);
+    bankBlocked = false;
+    await request({ action: "status" });
+    assert(notices.length === count + 1);
+    assert(notices.some((n) => n.message.includes("verified and ready")));
+  },
+);
+
+Deno.test(
+  "bank alerts honor message preferences, avoid repeat delivery, and background audits find problems",
+  async () => {
+    reset();
+    exposeBank = true;
+    bankBlocked = true;
+    a.payment_updates = true;
+    await request({ action: "status" });
+    assert(sends === 1);
+    await request({ action: "status" });
+    assert(sends === 1);
+    bankBlocked = false;
+    await request({ action: "status" });
+    assert(Number(sends) === 2);
+    a.payment_updates = false;
+    bankBlocked = true;
+    const response = await handler(
+      new Request("https://db.test/functions/v1/payments/run", {
+        method: "POST",
+        headers: { Authorization: "Bearer job-fixture" },
+      }),
+    );
+    assert(response.status === 200);
+    assert(Number(sends) === 2);
+    assert(notices.some((n) => n.message.includes("cannot make payments")));
   },
 );

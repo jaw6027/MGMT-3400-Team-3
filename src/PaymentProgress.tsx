@@ -2,7 +2,27 @@ import React from "react";
 import { View } from "react-native";
 import { C, Txt } from "./ui";
 import { transferProgress } from "../supabase/functions/_shared/payment-rules";
-export function PaymentProgress({ status }: { status: string }) {
+import {
+  arrivalEstimate,
+  failureExplanation,
+} from "../supabase/functions/_shared/payment-safety";
+export function PaymentProgress({
+  status,
+  created_at,
+  funding,
+  failureCode,
+  recipient,
+}: {
+  status: string;
+  created_at?: string;
+  funding?: string;
+  failureCode?: string | null;
+  recipient?: string;
+}) {
+  const estimate =
+    created_at && recipient !== "app"
+      ? arrivalEstimate(created_at, funding, status)
+      : null;
   const progress = transferProgress(status);
   return (
     <View style={{ gap: 10 }}>
@@ -38,6 +58,32 @@ export function PaymentProgress({ status }: { status: string }) {
           </View>
         ))}
       </View>
+      {estimate && (
+        <View style={{ gap: 5 }}>
+          <Txt style={{ fontFamily: "DMBold" }}>
+            Estimated recipient bank arrival: {estimate.earliest} –{" "}
+            {estimate.latest}
+          </Txt>
+          <Txt style={{ color: C.muted }}>
+            Planning estimate in UTC, not a confirmed payout date. Weekends
+            excluded; holidays, bank reviews, and the recipient’s payout
+            schedule may delay arrival. Payment completion does not confirm
+            money is available in their bank.
+          </Txt>
+          {estimate.overdue && (
+            <Txt style={{ color: C.red }}>
+              The estimated window has passed. Refresh status and ask the
+              recipient to check their bank; contact support with this payment
+              reference. Do not pay again while it is processing.
+            </Txt>
+          )}
+        </View>
+      )}
+      {status === "failed" && (
+        <Txt style={{ color: C.red }}>
+          Why it failed: {failureExplanation(failureCode)}
+        </Txt>
+      )}
       <Txt style={{ color: progress.step === 0 ? C.red : C.muted }}>
         {progress.detail}
       </Txt>

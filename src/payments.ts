@@ -6,6 +6,7 @@ export {
 } from "../supabase/functions/_shared/payment-rules";
 export type { Funding } from "../supabase/functions/_shared/payment-rules";
 export type PaymentMethod = {
+  issue?: string;
   brand?: string;
   id: string;
   label: string;
@@ -24,6 +25,9 @@ export type Due = {
   created_at?: string;
 };
 export type Payment = {
+  completed_at?: string | null;
+  funding?: "bank" | "credit" | "debit";
+  failureCode?: string | null;
   methodLabel?: string;
   dueId?: string;
   dueDate?: string;
@@ -71,6 +75,8 @@ export type BankLinkAttempt = {
   arrivalDate?: string;
 };
 export type IncomingPayment = {
+  funding?: string;
+  failureCode?: string | null;
   id: string;
   cents: number;
   status: string;
@@ -78,6 +84,7 @@ export type IncomingPayment = {
   sender: string;
 };
 export type PaymentState = {
+  bankIssues?: { id: string; state: string; message: string }[];
   security?: {
     verifiedUntil: number;
     recoveryCodesRemaining?: number;

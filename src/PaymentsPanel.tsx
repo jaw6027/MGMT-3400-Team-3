@@ -1,3 +1,7 @@
+import {
+  DUPLICATE_MESSAGE,
+  matchingPayment,
+} from "../supabase/functions/_shared/payment-safety";
 import React, { useEffect, useRef, useState } from "react";
 import { Linking, Switch, View } from "react-native";
 import * as Crypto from "expo-crypto";
@@ -306,10 +310,24 @@ export default function PaymentsPanel() {
   };
   const reviewPayment = () => {
     if (!method) throw new Error("Add and select a payment method first.");
+    if (method.issue) throw new Error(method.issue);
     if (method.verification === "pending")
       throw new Error("Complete bank verification in Accounts before paying.");
     if (!to) throw new Error("Choose who to pay.");
     const cents = to === "app" ? state.appDues : parseMoney(amount);
+    if (
+      matchingPayment(state.payments, to, cents) ||
+      (st.cashPayments || []).some(
+        (p: any) =>
+          p.from_id === self?.id &&
+          p.to_id === to &&
+          p.cents === cents &&
+          (p.status === "pending" ||
+            (p.status === "confirmed" &&
+              Date.parse(p.resolved_at || "") > Date.now() - 600000)),
+      )
+    )
+      throw new Error(DUPLICATE_MESSAGE);
     setReview({
       id: uid(),
       method: selected,
@@ -328,6 +346,26 @@ export default function PaymentsPanel() {
         st.household!.id,
         true,
       );
+      if (
+        matchingPayment(
+          fresh.payments,
+          review.recipient,
+          review.cents,
+          Date.now(),
+          review.id,
+        )
+      )
+        throw new Error(DUPLICATE_MESSAGE);
+      if (
+        (st.cashPayments || []).some(
+          (p: any) =>
+            p.from_id === self?.id &&
+            p.to_id === review.recipient &&
+            p.cents === review.cents &&
+            p.status === "pending",
+        )
+      )
+        throw new Error(DUPLICATE_MESSAGE);
       if (
         review.dueId &&
         fresh.payments.some(
@@ -374,6 +412,7 @@ export default function PaymentsPanel() {
                 status: "succeeded",
                 created_at: new Date().toISOString(),
                 methodLabel: method?.label,
+                funding: method?.funding,
                 dueId: review.dueId,
                 dueDate: review.dueDate,
                 requestId: review.requestId,
@@ -874,6 +913,27 @@ export default function PaymentsPanel() {
                       you directly.
                     </Txt>
                   </View>
+                  {!!state.bankIssues?.length && (
+                    <View
+                      style={{
+                        backgroundColor: C.bg,
+                        padding: 14,
+                        borderRadius: 12,
+                        gap: 10,
+                      }}
+                    >
+                      <Txt style={{ fontFamily: "DMBold", color: C.red }}>
+                        Bank accounts need attention
+                      </Txt>
+                      {state.bankIssues.map((issue) => (
+                        <Txt key={issue.id}>{issue.message}</Txt>
+                      ))}
+                      <Txt style={s.muted}>
+                        Check affected autopay schedules after updating your
+                        bank. Refresh status to check for recovery.
+                      </Txt>
+                    </View>
+                  )}
                   <Txt style={s.label}>BANK ACCOUNT LINKING</Txt>
                   <Txt>{BANK_NAMES.join(" · ")}</Txt>
                   <Txt style={s.muted}>
@@ -976,7 +1036,7 @@ export default function PaymentsPanel() {
                     >
                       <Chip
                         active={selected === m.id}
-                        label={`${m.label}${m.verification === "pending" ? " · Verification pending" : ""}`}
+                        label={`${m.label}${m.verification === "pending" ? " · Verification pending" : m.issue ? " · Needs attention" : ""}`}
                         onPress={() => {
                           setSelected(m.id);
                           setReview(null);
@@ -1699,7 +1759,7 @@ export default function PaymentsPanel() {
                             {fmt(p.cents)} from {recipientName(p.sender)} ·{" "}
                             {paymentStatus(p.status).label}
                           </Txt>
-                          <PaymentProgress status={p.status} />
+                          <PaymentProgress {...p} />
                         </View>
                       ))}
                     </>
@@ -1728,7 +1788,7 @@ export default function PaymentsPanel() {
                           {p.methodLabel ||
                             "Payment method unavailable for this older payment"}
                         </Txt>
-                        <PaymentProgress status={p.status} />
+                        <PaymentProgress {...p} />
                         <Button
                           secondary
                           small

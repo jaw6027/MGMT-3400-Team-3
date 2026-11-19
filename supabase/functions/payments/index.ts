@@ -1,3 +1,8 @@
+import {
+  DUPLICATE_MESSAGE,
+  failureExplanation,
+  safeFailureCode,
+} from "../_shared/payment-safety.ts";
 import Stripe from "npm:stripe@17.7.0";
 import { cardBrandName } from "../_shared/card-networks.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.89.0";
@@ -34,6 +39,7 @@ function check(yes: unknown, message: string): asserts yes {
   if (!yes) throw new Error(message);
 }
 function result<T>({ data, error }: { data: T; error: any }): T {
+  if (error?.code === "SC001") throw new Error(DUPLICATE_MESSAGE);
   if (error) throw new Error("Payment data could not be saved. Please retry.");
   return data;
 }
@@ -284,7 +290,7 @@ async function recipient(
   );
   return { member: m, destination: a.connect_id as string };
 }
-async function method(customerId: string, id: string) {
+async function method(customerId: string, id: string, requireReady = true) {
   check(
     typeof customerId === "string" && customerId.startsWith("cus_"),
     "Add a payment method first.",
@@ -308,11 +314,16 @@ async function method(customerId: string, id: string) {
     funding,
     "Only verified US bank accounts, credit cards, and debit cards are supported.",
   );
-  if (funding === "bank")
+  if (funding === "bank" && requireReady) {
+    check(
+      !(pm.us_bank_account as any)?.status_details?.blocked,
+      "This bank account is blocked for payments. Review Accounts and contact your bank or link another account.",
+    );
     check(
       await bankVerified(customerId, id),
       "Bank verification is pending. Complete bank verification in Accounts before paying.",
     );
+  }
   return { pm, funding };
 }
 function methodLabel(pm: Stripe.PaymentMethod) {
@@ -327,6 +338,17 @@ async function syncIntent(order: any, pi: Stripe.PaymentIntent) {
       pi.currency === "usd",
     "Payment verification failed.",
   );
+  const failureCode = safeFailureCode(pi.last_payment_error);
+  // Save curated codes only, never raw provider messages or financial objects.
+  if (failureCode || pi.status === "succeeded")
+    result(
+      await db
+        .from("payment_orders")
+        .update({
+          failure_code: pi.status === "succeeded" ? null : failureCode,
+        })
+        .eq("id", order.id),
+    );
   // A terminal reversal must never be overwritten by a late success event.
   if (["refunded", "disputed"].includes(order.status)) return;
   if (
@@ -340,7 +362,11 @@ async function syncIntent(order: any, pi: Stripe.PaymentIntent) {
       }),
     );
     await failedAutopay(order);
-    await paymentUpdate({ ...order, status: "failed" });
+    await paymentUpdate({
+      ...order,
+      status: "failed",
+      failure_code: failureCode,
+    });
     return;
   }
   if (pi.status === "succeeded")
@@ -550,12 +576,154 @@ async function charge(user: any, input: any, due?: any) {
     authenticationUrl: pi.next_action?.redirect_to_url?.url || null,
   };
 }
+function payoutHealth(state: string) {
+  return state === "ready"
+    ? "Your receiving bank is ready again. Review Accounts for current payout status."
+    : state === "needs_details"
+      ? "Your receiving bank needs additional details. Complete receiving-bank setup in Accounts; incoming payments may be unavailable."
+      : state === "restricted"
+        ? "Your receiving bank is restricted. Open receiving-bank setup for the provider’s requirements; payouts may be delayed or unavailable."
+        : "Your receiving bank is still being verified. Check Accounts; an arrival date is not confirmed.";
+}
+async function bankAlert(
+  user: any,
+  a: any,
+  resource: string,
+  state: string,
+  message: string,
+) {
+  const event = result(
+    await db.rpc("record_bank_health", {
+      account_user: user.id,
+      resource_key: resource,
+      new_state: state,
+      alert_message: message,
+    }),
+  );
+  if (!event || !a.payment_updates || !a.reminder_consent_at) return;
+  let delivery = "not_requested";
+  for (const channel of ["email", "sms"]) {
+    if (
+      !(channel === "email"
+        ? a.email_reminders && user.email_confirmed_at
+        : a.sms_reminders && a.phone_verified)
+    )
+      continue;
+    if (delivery === "not_requested") delivery = "sent";
+    try {
+      await billingMessage(
+        channel,
+        a,
+        user,
+        `SplitCart: ${message}`,
+        "Your SplitCart bank account needs attention",
+        `bank-${event}-${channel}`,
+      );
+    } catch (e) {
+      delivery = "failed";
+      if (e instanceof Error && e.message === "SMS_OPTED_OUT")
+        result(
+          await db
+            .from("billing_accounts")
+            .update({ sms_reminders: false })
+            .eq("user_id", user.id),
+        );
+    }
+  }
+  result(
+    await db
+      .from("bank_health_events")
+      .update({ delivery_status: delivery })
+      .eq("id", event),
+  );
+}
+async function inspectBank(user: any, a: any, pm: Stripe.PaymentMethod) {
+  const label = methodLabel(pm),
+    blocked = !!(pm.us_bank_account as any)?.status_details?.blocked;
+  const state = blocked
+    ? "blocked"
+    : (await bankVerified(a.customer_id, pm.id))
+      ? "ready"
+      : "pending";
+  const message =
+    state === "blocked"
+      ? `${label} cannot make payments. Contact your bank or link and verify another account, then update affected autopay schedules.`
+      : state === "pending"
+        ? `${label} is awaiting ownership verification. Complete verification in Accounts before paying; autopay cannot use this bank yet.`
+        : `${label} is verified and ready. Review any autopay schedules that need this bank.`;
+  await bankAlert(user, a, pm.id, state, message);
+  return { id: pm.id, state, message };
+}
+async function missingBanks(user: any, a: any, ids: Set<string>) {
+  const previous = result(
+    await db
+      .from("bank_health")
+      .select("resource")
+      .eq("user_id", user.id)
+      .like("resource", "pm_%"),
+  );
+  const issues = [];
+  for (const p of previous || [])
+    if (!ids.has(p.resource)) {
+      const issue = {
+        id: p.resource,
+        state: "missing",
+        message:
+          "A previously linked bank is no longer available. Review Accounts and any autopay schedules that used it. Link and verify a replacement if needed.",
+      };
+      issues.push(issue);
+      await bankAlert(user, a, issue.id, issue.state, issue.message);
+    }
+  return issues;
+}
+async function auditBanks(user: any, a: any) {
+  const ids = new Set<string>();
+  if (a.customer_id)
+    for await (const pm of stripe.paymentMethods.list({
+      customer: a.customer_id,
+      type: "us_bank_account",
+      limit: 100,
+    })) {
+      ids.add(pm.id);
+      await inspectBank(user, a, pm);
+    }
+  await missingBanks(user, a, ids);
+  const dues = result(
+    await db
+      .from("payment_dues")
+      .select("payment_method")
+      .eq("user_id", user.id)
+      .eq("automatic", true),
+  );
+  for (const due of dues || [])
+    if (due.payment_method && !ids.has(due.payment_method))
+      await bankAlert(
+        user,
+        a,
+        due.payment_method,
+        "missing",
+        "A bank used by autopay is no longer linked. Link and verify a bank, then update the affected autopay schedule. Review Activity before making another payment.",
+      );
+  if (a.connect_id) {
+    const c = await stripe.accounts.retrieve(a.connect_id);
+    const state =
+      c.payouts_enabled && c.capabilities?.transfers === "active"
+        ? "ready"
+        : c.requirements?.disabled_reason
+          ? "restricted"
+          : c.requirements?.currently_due?.length
+            ? "needs_details"
+            : "verification_pending";
+    await bankAlert(user, a, "receiving-bank", state, payoutHealth(state));
+  }
+}
 async function status(user: any) {
   const a = await account(user.id);
   const methods: any[] = [];
   let payoutReady = false;
   let payoutStatus = "not_started";
   const bankLinks: any[] = [];
+  const bankIssues: any[] = [];
   if (enabled()) {
     if (a.customer_id) {
       for (const type of ["card", "us_bank_account"] as const) {
@@ -569,17 +737,27 @@ async function status(user: any) {
             !["credit", "debit"].includes(pm.card!.funding)
           )
             continue;
+          const bankState =
+            pm.type === "us_bank_account"
+              ? await inspectBank(user, a, pm)
+              : undefined;
+          if (bankState && bankState.state !== "ready")
+            bankIssues.push(bankState);
           methods.push({
             id: pm.id,
             label: methodLabel(pm),
             brand: pm.type === "card" ? pm.card?.brand : undefined,
+            issue:
+              bankState && bankState.state !== "ready"
+                ? bankState.message
+                : undefined,
             funding: pm.type === "us_bank_account" ? "bank" : pm.card!.funding,
             verification:
-              pm.type === "us_bank_account"
-                ? (await bankVerified(a.customer_id, pm.id))
-                  ? "verified"
-                  : "pending"
-                : undefined,
+              bankState?.state === "ready"
+                ? "verified"
+                : bankState?.state === "pending"
+                  ? "pending"
+                  : undefined,
           });
         }
       }
@@ -596,7 +774,27 @@ async function status(user: any) {
           : c.requirements?.disabled_reason
             ? "restricted"
             : "verification_pending";
+      const issue = payoutHealth(payoutStatus);
+      await bankAlert(
+        user,
+        a,
+        "receiving-bank",
+        payoutStatus === "ready" ? "ready" : payoutStatus,
+        issue,
+      );
+      if (!payoutReady)
+        bankIssues.push({
+          id: "receiving-bank",
+          state: payoutStatus,
+          message: issue,
+        });
     }
+    const missing = await missingBanks(
+      user,
+      a,
+      new Set(methods.filter((m) => m.funding === "bank").map((m) => m.id)),
+    );
+    bankIssues.push(...missing);
     const attempts = result(
       await db
         .from("bank_link_attempts")
@@ -609,6 +807,17 @@ async function status(user: any) {
       try {
         const { url, ...progress } = await bankAttempt(row);
         bankLinks.push(progress);
+        if (
+          bankLinks.length === 1 &&
+          ["failed", "expired"].includes(progress.status)
+        ) {
+          const message =
+            progress.status === "expired"
+              ? "A bank verification link expired. Restart bank verification in Accounts; existing payments are preserved."
+              : "Bank ownership verification failed. Restart secure bank linking or contact your bank; do not try paying from this account yet.";
+          bankIssues.push({ id: row.id, state: progress.status, message });
+          await bankAlert(user, a, `link-${row.id}`, progress.status, message);
+        }
       } catch {
         bankLinks.push({
           id: row.id,
@@ -653,13 +862,29 @@ async function status(user: any) {
           .order("created_at", { ascending: false }),
       )
     : [];
+  for (const d of dues || []) {
+    if (
+      d.automatic &&
+      d.payment_method &&
+      !methods.some((m) => m.id === d.payment_method)
+    ) {
+      const issue = {
+        id: d.payment_method,
+        state: "missing",
+        message:
+          "A bank used by autopay is no longer linked. Future charges cannot use it. Link and verify a bank, then update the affected autopay schedule.",
+      };
+      bankIssues.push(issue);
+      await bankAlert(user, a, issue.id, issue.state, issue.message);
+    }
+  }
   const payments: any[] = [];
   for (let offset = 0; ; offset += 500) {
     const page = result(
       await db
         .from("payment_orders")
         .select(
-          "id,cents,fee,status,created_at,recipient_id,method_label,payment_method,due_id,due_date,request_id",
+          "id,cents,fee,status,created_at,recipient_id,method_label,payment_method,due_id,due_date,request_id,funding,failure_code,completed_at",
         )
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
@@ -692,7 +917,7 @@ async function status(user: any) {
     ? result(
         await db
           .from("payment_orders")
-          .select("id,cents,status,created_at,from_id")
+          .select("id,cents,status,created_at,from_id,funding,failure_code")
           .eq("recipient_id", self.id)
           .eq("household_id", self.household_id)
           .order("created_at", { ascending: false })
@@ -701,10 +926,14 @@ async function status(user: any) {
     : [];
   return {
     bankLinks,
+    bankIssues: [
+      ...new Map(bankIssues.map((issue) => [issue.id, issue])).values(),
+    ],
     payoutStatus,
     incomingPayments: (incoming || []).map((p: any) => ({
       ...p,
       sender: p.from_id,
+      failureCode: p.failure_code,
     })),
     requests: (requests || []).map((r: any) => ({
       id: r.id,
@@ -751,6 +980,7 @@ async function status(user: any) {
       ...p,
       recipient: p.recipient_id || "app",
       methodLabel: p.method_label,
+      failureCode: p.failure_code,
       dueId: p.due_id,
       dueDate: p.due_date,
       requestId: p.request_id,
@@ -847,7 +1077,7 @@ async function paymentUpdate(order: any) {
     const prefix = target.incoming
       ? "An incoming roommate payment"
       : "Your payment";
-    const text = `SplitCart: ${prefix} of $${(order.cents / 100).toFixed(2)} ${event === "pending" ? "is pending. Wait for confirmation before making another payment." : event === "succeeded" ? "was successful. The household balance has been updated; bank payout timing may still apply." : event === "failed" ? "failed. Check Activity and your bank before trying again." : "needs bank authentication. Open Activity for next steps."} Reference ${order.id}.`;
+    const text = `SplitCart: ${prefix} of $${(order.cents / 100).toFixed(2)} ${event === "pending" ? "is pending. Wait for confirmation before making another payment." : event === "succeeded" ? "was successful. The household balance has been updated; bank payout timing may still apply." : event === "failed" ? `failed. ${failureExplanation(order.failure_code)}` : "needs bank authentication. Open Activity for next steps."} Reference ${order.id}.`;
     await notify(target.id, text, `payment-${order.id}-${event}`);
     const a = await account(target.id);
     if (!a.payment_updates || !a.reminder_consent_at) continue;
@@ -1001,6 +1231,25 @@ async function worker() {
     .slice(0, 7);
   let visited = 0,
     failures = 0;
+  for (let offset = 0; ; offset += 100) {
+    const accounts = result(
+      await db
+        .from("billing_accounts")
+        .select("*")
+        .order("user_id")
+        .range(offset, offset + 99),
+    );
+    for (const a of accounts || []) {
+      try {
+        const { data, error } = await db.auth.admin.getUserById(a.user_id);
+        if (error || !data.user) continue;
+        await auditBanks(data.user, a);
+      } catch {
+        failures++;
+      }
+    }
+    if (!accounts || accounts.length < 100) break;
+  }
   const since = new Date(now.getTime() - 7 * 86400000).toISOString();
   for (let offset = 0; ; offset += 100) {
     const orders = result(
@@ -1723,7 +1972,7 @@ export async function handler(req: Request) {
       return send({ url: link.url });
     }
     if (action === "remove_method") {
-      const m = await method(a.customer_id, input.id);
+      const m = await method(a.customer_id, input.id, false);
       const dues = result(
         await db
           .from("payment_dues")

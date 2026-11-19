@@ -1,3 +1,7 @@
+import {
+  failureExplanation,
+  arrivalEstimate,
+} from "../supabase/functions/_shared/payment-safety";
 import { paymentStatus } from "../supabase/functions/_shared/payment-rules";
 import { Due, Payment } from "./payments";
 import {
@@ -59,6 +63,13 @@ export function receiptText(
     `Recipient: ${recipient}`,
     `Method: ${payment.methodLabel || method || "Unavailable (older payment)"}`,
     `Status: ${paymentStatus(payment.status).label}`,
+    payment.status === "failed"
+      ? `Why it failed: ${failureExplanation(payment.failureCode)}`
+      : "",
+    payment.recipient !== "app" &&
+    arrivalEstimate(payment.created_at, payment.funding, payment.status)
+      ? `Estimated recipient bank arrival: ${arrivalEstimate(payment.created_at, payment.funding, payment.status)!.earliest} – ${arrivalEstimate(payment.created_at, payment.funding, payment.status)!.latest}. Planning estimate only; bank holidays, reviews and payout schedules may delay arrival.`
+      : "",
     `Payment amount: ${amount(payment.cents)}`,
     `Credit-card surcharge: ${amount(payment.fee)}`,
     `Total: ${amount(payment.cents + payment.fee)}`,

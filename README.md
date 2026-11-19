@@ -207,3 +207,11 @@ Actual acceptance depends on Stripe account eligibility, account country, issuer
 Bank linking includes guidance for Wells Fargo, Chase, Bank of America, Citibank, Goldman Sachs, Capital One, US Bank, and PNC Bank, plus a secure account-and-routing-number entry point with provider-supported manual entry and microdeposit verification. Eligibility depends on the specific account and provider; the list does not restrict other banks or guarantee all products at a named bank. Fresh two-step security and bank ownership verification remain mandatory. Receiving-bank onboarding is separate. See [bank coverage details](docs/payments.md#bank-coverage-and-manual-account-entry).
 
 Previews: [seven card networks](docs/previews/card-networks.png), [credit payment review](docs/previews/card-network-review.png), and [bank linking options](docs/previews/bank-linking-options.png).
+
+## Payment safeguards and clearer status
+
+SplitCart now blocks matching pending bank/card/cash payments and protects recent equal-amount completions for ten minutes. Activity shows dated recipient-bank arrival estimates, explains provider-reported failures, and warns when an estimate has passed. Accounts highlights bank verification, availability and receiving-bank issues. Health transitions generate deduplicated in-app alerts and opted-in email/text status notifications; the existing payment job checks bank health in the background.
+
+Apply `202611190001_payment_safety.sql` before deploying the updated app and payment function. Arrival windows are planning estimates, not confirmed payouts; live bank/Stripe configuration and staging verification are still required. See [payment safety and bank health](docs/payments.md#duplicate-protection-arrival-estimates-and-bank-health).
+
+New simulated screen previews: [duplicate protection](docs/previews/duplicate-payment-protection.png), [processing and estimated arrival](docs/previews/payment-processing-arrival.png), [bank issue alert](docs/previews/linked-bank-alert.png), and [failure explanation](docs/previews/payment-failure-reason.png).

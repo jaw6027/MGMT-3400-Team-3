@@ -925,3 +925,99 @@ test("manual bank linking starts ownership verification and cannot be used befor
     page.getByText("Bank ownership verified · Ready to pay", { exact: true }),
   ).toBeVisible();
 });
+
+test("new payment references cannot repeat a recent completed payment", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await verifySampleSecurity(page);
+  await button("Add sample credit card").click();
+  await button("Pay").click();
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("100");
+  await button("Review payment").click();
+  await button("Confirm demo payment").click();
+  await button("Review payment").click();
+  await expect(page.getByText(/Possible duplicate payment/)).toBeVisible();
+  await expect(button("Confirm demo payment")).toHaveCount(0);
+  const count = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) =>
+      k.startsWith("splitcart-payments-demo-v1-"),
+    )!;
+    return JSON.parse(localStorage.getItem(key)!).payments.length;
+  });
+  expect(count).toBe(1);
+});
+
+test("processing payments show a dated bank-arrival estimate and failures explain a safe next step", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await verifySampleSecurity(page);
+  await button("Add sample credit card").click();
+  await button("Pay").click();
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("100");
+  await button("Review payment").click();
+  await button("Confirm demo payment").click();
+  await expect(
+    page.getByText("Demo payment simulated. No money moved.", { exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) =>
+      k.startsWith("splitcart-payments-demo-v1-"),
+    )!;
+    const state = JSON.parse(localStorage.getItem(key)!);
+    const p = state.payments[0];
+    state.payments = [
+      {
+        ...p,
+        id: "processing-preview",
+        status: "processing",
+        funding: "bank",
+        fee: 0,
+        methodLabel: "Sample checking •••• 6789",
+      },
+      {
+        ...p,
+        id: "failure-preview",
+        cents: 7500,
+        fee: 188,
+        status: "failed",
+        failureCode: "insufficient_funds",
+      },
+    ];
+    state.bankIssues = [
+      {
+        id: "sample-bank",
+        state: "blocked",
+        message:
+          "Sample checking •••• 6789 cannot make payments. Contact your bank or link and verify another account, then update affected autopay schedules.",
+      },
+    ];
+    localStorage.setItem(key, JSON.stringify(state));
+  });
+  await button("Activity").click();
+  await button("Refresh payment status").click();
+  await expect(
+    page.getByText(/Estimated recipient bank arrival: \d{4}-\d{2}-\d{2}/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Why it failed: There were insufficient funds/),
+  ).toBeVisible();
+  await expect(page.getByText(/not a confirmed payout date/)).toBeVisible();
+  await button("Accounts").click();
+  await expect(
+    page.getByText("Bank accounts need attention", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/update affected autopay schedules/),
+  ).toBeVisible();
+  await button("Pay").click();
+  await button("Review payment").click();
+  await expect(page.getByText(/Possible duplicate payment/)).toBeVisible();
+});
