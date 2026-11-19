@@ -34,6 +34,8 @@ let orders: any[] = [],
   notices: any[] = [],
   updateRows: any[] = [],
   bankAttempts: any[] = [];
+let cardBrand = "visa",
+  showCatalogCards = false;
 let bankReady = true;
 let bankSessionStatus = "complete",
   factorDeleteFails = false;
@@ -80,6 +82,8 @@ function reset() {
   notices = [];
   updateRows = [];
   bankAttempts = [];
+  cardBrand = "visa";
+  showCatalogCards = false;
   bankReady = true;
   bankSessionStatus = "complete";
   factorDeleteFails = false;
@@ -170,13 +174,32 @@ globalThis.fetch = async (
       });
 
     if (url.pathname === "/v1/payment_methods")
-      return json({ data: [], has_more: false });
+      return json({
+        data:
+          showCatalogCards && url.searchParams.get("type") === "card"
+            ? [
+                "visa",
+                "mastercard",
+                "amex",
+                "discover",
+                "unionpay",
+                "jcb",
+                "diners",
+              ].map((brand) => ({
+                id: `pm_${brand}`,
+                customer: "cus_user",
+                type: "card",
+                card: { funding: "credit", brand, last4: "4242" },
+              }))
+            : [],
+        has_more: false,
+      });
     if (url.pathname.startsWith("/v1/payment_methods/"))
       return json({
         id: "pm_fixture",
         customer: ownMethod ? "cus_user" : "cus_someone_else",
         type: funding === "bank" ? "us_bank_account" : "card",
-        card: { funding, last4: "4242", brand: "visa" },
+        card: { funding, last4: "4242", brand: cardBrand },
       });
     if (url.pathname.startsWith("/v1/accounts/"))
       return json({
@@ -1208,5 +1231,109 @@ Deno.test(
       expired.bankLinks[0].status === "expired" &&
         !expired.bankLinks[0].canResume,
     );
+  },
+);
+
+Deno.test(
+  "all seven requested credit-card brands pay with the same server-calculated surcharge",
+  async () => {
+    const { CARD_NETWORKS } = await import("../_shared/card-networks.ts");
+    for (const network of CARD_NETWORKS) {
+      reset();
+      cardBrand = network.id;
+      const response = await request(payment());
+      assert(response.status === 200, await response.clone().text());
+      const saved = await response.json();
+      assert(
+        saved.status === "succeeded" &&
+          saved.fee === 25 &&
+          saved.cents === 1000,
+      );
+      assert(saved.method_label === `${network.name} credit •••• 4242`);
+      const create = requests.find(
+        (r) => r.url.pathname === "/v1/payment_intents",
+      )!;
+      assert(
+        create.body.amount === "1025" &&
+          create.body["transfer_data[amount]"] === "1000",
+      );
+      assert(create.body["payment_method_types[0]"] === "card");
+    }
+  },
+);
+Deno.test(
+  "saved cards expose readable brands and secure setup has no brand restriction",
+  async () => {
+    reset();
+    showCatalogCards = true;
+    const { CARD_NETWORKS } = await import("../_shared/card-networks.ts");
+    const response = await request({ action: "status" });
+    assert(response.status === 200, await response.clone().text());
+    const state = await response.json();
+    assert(state.methods.length === 7);
+    for (const network of CARD_NETWORKS)
+      assert(
+        state.methods.some(
+          (m: any) =>
+            m.brand === network.id &&
+            m.label === `${network.name} credit •••• 4242`,
+        ),
+      );
+    const setup = await request(
+      { action: "setup", kind: "card" },
+      "",
+      secondFactorToken(),
+    );
+    assert(setup.status === 200, await setup.clone().text());
+    const session = requests.find(
+      (r) => r.url.pathname === "/v1/checkout/sessions",
+    )!;
+    assert(session.body["payment_method_types[0]"] === "card");
+    assert(
+      !Object.keys(session.body).some(
+        (k) => k.includes("disallowed") || k.includes("allowed_brands"),
+      ),
+      "Do not add a brand exclusion to card setup",
+    );
+    reset();
+    cardBrand = "amex";
+    funding = "debit";
+    const debit = await request({ ...payment(), total: 1000 });
+    assert(debit.status === 200);
+    assert(
+      (await debit.json()).fee === 0,
+      "Funding classification, not brand, controls the surcharge",
+    );
+  },
+);
+
+Deno.test(
+  "bank setup permits provider manual fallback without bank-name restrictions and requires fresh security",
+  async () => {
+    reset();
+    const response = await request(
+      { action: "setup", kind: "bank" },
+      "",
+      secondFactorToken(),
+    );
+    assert(response.status === 200, await response.clone().text());
+    const session = requests.find(
+      (r) => r.url.pathname === "/v1/checkout/sessions",
+    )!;
+    assert(session.body["payment_method_types[0]"] === "us_bank_account");
+    assert(
+      session.body[
+        "payment_method_options[us_bank_account][verification_method]"
+      ] === "automatic",
+    );
+    assert(
+      !Object.keys(session.body).some((k) =>
+        /routing_number|account_number|bank_name/.test(k),
+      ),
+      "Collect numbers on the provider page without bank-name restrictions",
+    );
+    reset();
+    const unverified = await request({ action: "setup", kind: "bank" });
+    assert(unverified.status !== 200);
   },
 );

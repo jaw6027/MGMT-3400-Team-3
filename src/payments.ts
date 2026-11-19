@@ -6,6 +6,7 @@ export {
 } from "../supabase/functions/_shared/payment-rules";
 export type { Funding } from "../supabase/functions/_shared/payment-rules";
 export type PaymentMethod = {
+  brand?: string;
   id: string;
   label: string;
   funding: "bank" | "credit" | "debit";

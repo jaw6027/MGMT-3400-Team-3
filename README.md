@@ -195,3 +195,15 @@ Latest screen previews: [two-step verification](docs/previews/two-step-verificat
 Apply migration `202611180004_cash_confirmation_recovery.sql` before deploying the updated app and payment function. Validate factor-reset/session behavior, bank verification, and notification delivery with a hosted test project and physical devices before production use.
 
 Updated screen previews: [cash awaiting receiver approval](docs/previews/cash-confirmation.png), [confirmed cash](docs/previews/cash-confirmed.png), [bank verification recovery](docs/previews/bank-verification-recovery.png), [lost-authenticator recovery](docs/previews/authenticator-recovery.png), and [canceling autopay](docs/previews/cancel-autopay.png).
+
+## Card networks
+
+Secure card setup uses Stripe’s general `card` payment type without a SplitCart brand restriction. The app names **Visa, Mastercard, American Express, Discover, UnionPay, JCB, and Diners Club International** in Accounts and displays the brand Stripe detects on saved cards, payment reviews, and new receipts. Live card setup detects the network automatically; users do not select a brand or enter card numbers in SplitCart itself.
+
+The browser demo includes a selector for all seven networks and distinct masked sample cards. The existing two-step security check still applies before adding cards. The **2.5% surcharge applies only when Stripe classifies the card as credit**; debit remains surcharge-free. Prepaid or unknown funding classifications remain unsupported rather than being guessed from the brand. The catalog is not an allowlist: other eligible provider-supported networks are not blocked solely because they are absent from this display list.
+
+Actual acceptance depends on Stripe account eligibility, account country, issuer, currency, and authentication support. [Stripe’s card-brand capabilities](https://docs.stripe.com/payments/cards#online-card-brand-capabilities) currently list all seven requested networks for US Stripe accounts. Confirm the account’s payment-method settings and test each applicable network using Stripe’s official test methods before live deployment. No additional database migration is required for this update; deploy the updated app and payment function for the new card labels.
+
+Bank linking includes guidance for Wells Fargo, Chase, Bank of America, Citibank, Goldman Sachs, Capital One, US Bank, and PNC Bank, plus a secure account-and-routing-number entry point with provider-supported manual entry and microdeposit verification. Eligibility depends on the specific account and provider; the list does not restrict other banks or guarantee all products at a named bank. Fresh two-step security and bank ownership verification remain mandatory. Receiving-bank onboarding is separate. See [bank coverage details](docs/payments.md#bank-coverage-and-manual-account-entry).
+
+Previews: [seven card networks](docs/previews/card-networks.png), [credit payment review](docs/previews/card-network-review.png), and [bank linking options](docs/previews/bank-linking-options.png).

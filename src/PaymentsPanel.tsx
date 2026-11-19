@@ -7,6 +7,12 @@ import { Button, C, Chip, Field, Icon, s, Title, Txt } from "./ui";
 import { money, parseMoney, today } from "./core";
 import { uid, client } from "./backend";
 import { paymentAction } from "./paymentApi";
+import {
+  CARD_NETWORKS,
+  sampleCreditCard,
+  type CardNetworkId,
+} from "../supabase/functions/_shared/card-networks";
+import { BANK_NAMES } from "../supabase/functions/_shared/bank-linking";
 import { BankSecurityCheck } from "./BankSecurityCheck";
 import { PaymentProgress } from "./PaymentProgress";
 import { PaymentDashboard } from "./PaymentDashboard";
@@ -62,6 +68,7 @@ export default function PaymentsPanel() {
   const [open, setOpen] = useState(false),
     [ready, setReady] = useState(false);
   const [section, setSection] = useState("Accounts");
+  const [sampleBrand, setSampleBrand] = useState<CardNetworkId>("visa");
   const [editingDue, setEditingDue] = useState<Due | null>(null);
   const [dueContext, setDueContext] = useState<{
     id: string;
@@ -258,11 +265,7 @@ export default function PaymentsPanel() {
                 label: "Demo checking •••• 6789",
                 verification: "pending" as const,
               }
-            : {
-                id: "demo-card",
-                funding: "credit" as const,
-                label: "Demo Visa credit •••• 4242",
-              };
+            : sampleCreditCard(sampleBrand);
         await persist(
           notice(
             {
@@ -871,6 +874,70 @@ export default function PaymentsPanel() {
                       you directly.
                     </Txt>
                   </View>
+                  <Txt style={s.label}>BANK ACCOUNT LINKING</Txt>
+                  <Txt>{BANK_NAMES.join(" · ")}</Txt>
+                  <Txt style={s.muted}>
+                    Search for your bank on the secure provider page, or choose
+                    account and routing numbers when offered. Eligible US ACH
+                    accounts only; availability depends on the bank and account
+                    type, including Goldman Sachs accounts. Other eligible banks
+                    can also be linked. SplitCart never stores your full
+                    numbers.
+                  </Txt>
+                  <Txt style={s.muted}>
+                    On the secure page, choose manual entry if offered. Test
+                    deposits may be required to verify ownership. Complete
+                    verification in Accounts before paying. Receiving money
+                    requires the separate receiving-bank setup below.
+                  </Txt>
+                  <Button
+                    secondary
+                    label={
+                      st.demo
+                        ? "Try sample account-and-routing verification"
+                        : "Link with account and routing numbers"
+                    }
+                    disabled={
+                      busy ||
+                      !state.available ||
+                      verificationUntil <= Date.now() / 1000
+                    }
+                    onPress={() => void run(() => setup("bank"))}
+                  />
+                  <Txt style={s.label}>CARD NETWORKS</Txt>
+                  <Txt>
+                    {CARD_NETWORKS.map((network) => network.name).join(" · ")}
+                  </Txt>
+                  <Txt style={s.muted}>
+                    Available through secure card setup where supported by the
+                    card issuer and payment provider. Credit cards have a 2.5%
+                    surcharge; debit cards have none.
+                  </Txt>
+                  {st.demo && (
+                    <>
+                      <Txt style={s.label}>SAMPLE CREDIT CARD NETWORK</Txt>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          flexWrap: "wrap",
+                          gap: 8,
+                        }}
+                      >
+                        {CARD_NETWORKS.map((network) => (
+                          <Chip
+                            key={network.id}
+                            label={network.name}
+                            active={sampleBrand === network.id}
+                            onPress={() => setSampleBrand(network.id)}
+                          />
+                        ))}
+                      </View>
+                      <Txt style={s.muted}>
+                        Choose a network, then add its sample card. No real card
+                        details are collected.
+                      </Txt>
+                    </>
+                  )}
                   <View
                     style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}
                   >

@@ -1,4 +1,5 @@
 import Stripe from "npm:stripe@17.7.0";
+import { cardBrandName } from "../_shared/card-networks.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.89.0";
 import {
   quote,
@@ -317,7 +318,7 @@ async function method(customerId: string, id: string) {
 function methodLabel(pm: Stripe.PaymentMethod) {
   return pm.type === "us_bank_account"
     ? `${pm.us_bank_account?.bank_name || "Bank"} •••• ${pm.us_bank_account?.last4}`
-    : `${pm.card?.brand} ${pm.card?.funding} •••• ${pm.card?.last4}`;
+    : `${cardBrandName(pm.card?.brand)} ${pm.card?.funding} •••• ${pm.card?.last4}`;
 }
 async function syncIntent(order: any, pi: Stripe.PaymentIntent) {
   check(
@@ -571,6 +572,7 @@ async function status(user: any) {
           methods.push({
             id: pm.id,
             label: methodLabel(pm),
+            brand: pm.type === "card" ? pm.card?.brand : undefined,
             funding: pm.type === "us_bank_account" ? "bank" : pm.card!.funding,
             verification:
               pm.type === "us_bank_account"
@@ -1654,6 +1656,8 @@ export async function handler(req: Request) {
         mode: "setup",
         customer: c,
         currency: "usd",
+        // Stripe's generic card type accepts eligible networks, including all
+        // seven in our catalog. Do not add a brand restriction here.
         payment_method_types: [
           input.kind === "bank" ? "us_bank_account" : "card",
         ],
@@ -1661,6 +1665,8 @@ export async function handler(req: Request) {
           ? {
               payment_method_options: {
                 us_bank_account: {
+                  // Automatic keeps instant linking and provider-supported
+                  // manual entry/microdeposit fallback available for any bank.
                   verification_method: "automatic" as const,
                   financial_connections: {
                     permissions: ["payment_method" as const],

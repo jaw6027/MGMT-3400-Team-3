@@ -855,3 +855,73 @@ test("expired bank verification offers a restart without marking the bank verifi
     page.getByText("Bank ownership verified · Ready to pay", { exact: true }),
   ).toHaveCount(0);
 });
+
+test("all seven sample credit-card networks can be added and reviewed with the credit-only surcharge", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await verifySampleSecurity(page);
+  for (const name of [
+    "Visa",
+    "Mastercard",
+    "American Express",
+    "Discover",
+    "UnionPay",
+    "JCB",
+    "Diners Club International",
+  ]) {
+    await button(name).click();
+    await button("Add sample credit card").click();
+    await button("Pay").click();
+    await page.getByLabel("Payment amount (USD)", { exact: true }).fill("100");
+    await expect(
+      page.getByText("Estimated total: $102.50", { exact: true }),
+    ).toBeVisible();
+    await button("Review payment").click();
+    await expect(
+      page.getByText(`Paying with: Demo ${name} credit`, { exact: false }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Total charged: $102.50", { exact: true }),
+    ).toBeVisible();
+    await button("Cancel payment review").click();
+    await button("Accounts").click();
+  }
+  const methods = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) =>
+      k.startsWith("splitcart-payments-demo-v1-"),
+    )!;
+    return JSON.parse(localStorage.getItem(key)!).methods;
+  });
+  expect(methods).toHaveLength(7);
+  expect(new Set(methods.map((m: any) => m.brand)).size).toBe(7);
+});
+
+test("manual bank linking starts ownership verification and cannot be used before it clears", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  const manual = button("Try sample account-and-routing verification");
+  await expect(manual).toBeDisabled();
+  await expect(
+    page.getByText(
+      "Wells Fargo · Chase · Bank of America · Citibank · Goldman Sachs · Capital One · US Bank · PNC Bank",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await verifySampleSecurity(page);
+  await manual.click();
+  await expect(
+    page.getByText("Bank ownership verification pending", { exact: true }),
+  ).toBeVisible();
+  await button("Complete sample bank verification").click();
+  await expect(
+    page.getByText("Bank ownership verified · Ready to pay", { exact: true }),
+  ).toBeVisible();
+});
