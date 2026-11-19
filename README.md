@@ -281,3 +281,7 @@ The live app now supports **Household → Developer business settings** for expl
 Developers can record the business legal name, Corporation/LLC/Sole proprietorship structure, and a compatible tax classification such as C corporation or S corporation. This is an internal record, not a filing or tax election. The business-funds panel shows available/pending Stripe platform balances and masked bank metadata, and opens Stripe's secure business payout-bank settings for account/routing entry. SplitCart never stores full bank numbers or initiates a payout from this screen. Roommate payment destinations stay unchanged.
 
 Deploy migration `202611190006_developer_business.sql` and `developer-business`, then have a trusted database operator grant the verified developers' Auth UUIDs. No users are granted access automatically. See [provisioning, privacy and deployment](docs/payments.md#private-developer-business-settings). The public preview intentionally contains no developer account, private-data sample or developer-mode bypass.
+
+## In-app support assistant
+
+Use the floating chat button for **SplitMate Assistant**, SplitCart’s local support guide. It offers step-by-step help, suggested questions and shortcuts to existing screens in both the app and packaged browser demo. No external AI API or paid service is required. Subscription plans/prices and the public support contact are explicitly marked as undefined until the team configures them. See [assistant behavior, editable FAQ content and testing](docs/support-assistant.md).

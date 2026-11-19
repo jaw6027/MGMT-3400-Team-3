@@ -1,3 +1,4 @@
+import SupportChat from "./src/SupportChat";
 import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
 import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
 import {
@@ -241,8 +242,20 @@ function Main() {
     );
   if (store.recovering && store.user)
     return <PasswordRecovery onComplete={store.completeRecovery} />;
-  if (!store.user) return <Auth />;
-  if (!store.household) return <HouseholdSetup />;
+  if (!store.user)
+    return (
+      <>
+        <Auth />
+        <SupportChat key="signed-out" signedIn={false} />
+      </>
+    );
+  if (!store.household)
+    return (
+      <>
+        <HouseholdSetup />
+        <SupportChat key={`setup-${store.user.id}`} signedIn={false} />
+      </>
+    );
   const nav = (name: Tab) => {
     setTab(name);
   };
@@ -999,6 +1012,10 @@ function Main() {
           )}
         </View>
       </View>
+      <SupportChat
+        key={`${store.demo}-${store.user.id}-${store.household.id}`}
+        onNavigate={setTab}
+      />
       {toast !== "" && (
         <View
           accessibilityLiveRegion="polite"

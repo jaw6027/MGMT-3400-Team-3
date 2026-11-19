@@ -8,6 +8,8 @@ const build = spawnSync(
   [
     "node_modules/expo/bin/cli",
     "export",
+    // Demo flags differ from a normal web export; do not reuse its inlined env cache.
+    "--clear",
     "--platform",
     "web",
     "--output-dir",
