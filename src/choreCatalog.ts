@@ -1,0 +1,117 @@
+// Imported from Chore Chart - SplitCart.xlsx. source_name preserves the original cell text.
+export const choreCatalog = [
+  {
+    id: "take-out-trash",
+    name: "Take Out Trash",
+    source_name: "Take Out Trash",
+    position: 0,
+  },
+  {
+    id: "take-out-recycling",
+    name: "Take Out Recycling",
+    source_name: "Take Out Recycling",
+    position: 1,
+  },
+  {
+    id: "wash-dishes",
+    name: "Wash Dishes",
+    source_name: "Wash Dishes",
+    position: 2,
+  },
+  {
+    id: "unload-dishwasher",
+    name: "Unload Dishwasher",
+    source_name: "Unload Dishwasher",
+    position: 3,
+  },
+  {
+    id: "vacuum",
+    name: "Vacuum",
+    source_name: "Vacuum",
+    position: 4,
+  },
+  {
+    id: "sweep",
+    name: "Sweep",
+    source_name: "Sweep",
+    position: 5,
+  },
+  {
+    id: "mop",
+    name: "Mop",
+    source_name: "Mop",
+    position: 6,
+  },
+  {
+    id: "clean-bathroom-surfaces",
+    name: "Clean Bathroom Surfaces",
+    source_name: "Clean Bathroom Surfaces",
+    position: 7,
+  },
+  {
+    id: "clean-toilet",
+    name: "Clean Toilet",
+    source_name: "Clean Toilet",
+    position: 8,
+  },
+  {
+    id: "clean-shower",
+    name: "Clean Shower",
+    source_name: "Clean Shower",
+    position: 9,
+  },
+  {
+    id: "laundry",
+    name: "Laundry",
+    source_name: "Laundry",
+    position: 10,
+  },
+  {
+    id: "clean-out-refrigerator",
+    name: "Clean out Refrigerator",
+    source_name: "Clean out Refridgerator",
+    position: 11,
+  },
+  {
+    id: "dust-surfaces",
+    name: "Dust Surfaces",
+    source_name: "Dust Surfaces",
+    position: 12,
+  },
+  {
+    id: "clean-outdoor-area",
+    name: "Clean Outdoor Area",
+    source_name: "Clean Outdoor Area",
+    position: 13,
+  },
+  {
+    id: "clean-stove-oven",
+    name: "Clean Stove/Oven",
+    source_name: "Clean Stove/Oven",
+    position: 14,
+  },
+  {
+    id: "mow-lawn",
+    name: "Mow Lawn",
+    source_name: "Mow Lawn",
+    position: 15,
+  },
+  {
+    id: "refill-hand-dish-soap",
+    name: "Refill Hand/Dish Soap",
+    source_name: "Refill Hand/Dish Soap",
+    position: 16,
+  },
+  {
+    id: "clean-kitchen-counters",
+    name: "Clean Kitchen Counters",
+    source_name: "Clean Kitchen Counters",
+    position: 17,
+  },
+  {
+    id: "clean-windows",
+    name: "Clean Windows",
+    source_name: "Clean Windows",
+    position: 18,
+  },
+];

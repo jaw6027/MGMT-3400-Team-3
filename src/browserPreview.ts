@@ -1,3 +1,9 @@
+import {
+  canonicalChoreName,
+  validateChore,
+  makeChoreCompletion,
+  undoChoreCompletion,
+} from "./chores";
 // Browser-only rehearsal backend. Nothing here authenticates real users, sends
 // email/SMS, or processes money. Every request stays inside the current browser.
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -6,6 +12,8 @@ import { Platform } from "react-native";
 import {
   Expense,
   ShoppingItem,
+  Chore,
+  ChoreCompletion,
   Household,
   Member,
   Repayment,
@@ -35,6 +43,8 @@ type User = {
 type PreviewMember = Member & { household_id: string };
 type Database = {
   shoppingItems?: ShoppingItem[];
+  chores?: Chore[];
+  choreCompletions?: ChoreCompletion[];
   cashPayments?: CashPayment[];
   users: User[];
   households: Household[];
@@ -148,6 +158,8 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
   };
   const ensureMemberHouses = (db: Database) => {
     db.shoppingItems ||= [];
+    db.chores ||= [];
+    db.choreCompletions ||= [];
     db.members = db.members.map((m) => ({
       ...m,
       household_id: (m as PreviewMember).household_id || "demo-house",
@@ -394,6 +406,90 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
             await save(db);
             return json(null);
           }
+          if (name === "save_chore") {
+            const item = payload.payload as Chore;
+            requireHouse(db, user.id, item.household_id);
+            const old = db.chores!.find((c) => c.id === item.id);
+            if (
+              old &&
+              (old.household_id !== item.household_id ||
+                old.version !== item.version)
+            )
+              throw new Error(
+                "This chore changed. Close and reopen it before saving.",
+              );
+            validateChore(
+              item,
+              db.members.filter((m) => m.household_id === item.household_id),
+            );
+            db.chores = [
+              {
+                ...item,
+                name: canonicalChoreName(item.name, item.catalog_id),
+                archived: old?.archived || false,
+                version: (old?.version || 0) + 1,
+                created_by: old?.created_by || user.id,
+                created_at: old?.created_at || new Date().toISOString(),
+              },
+              ...db.chores!.filter((c) => c.id !== item.id),
+            ];
+            await save(db);
+            return json(null);
+          }
+          if (
+            [
+              "set_chore_archived",
+              "log_chore_completion",
+              "undo_chore_completion",
+            ].includes(name || "")
+          ) {
+            const entry = db.choreCompletions!.find(
+              (c) => c.id === payload.completion_id,
+            );
+            const item = db.chores!.find(
+              (c) =>
+                c.id ===
+                (name === "undo_chore_completion"
+                  ? entry?.chore_id
+                  : payload.chore_id),
+            );
+            if (!item) throw new Error("This chore is unavailable.");
+            requireHouse(db, user.id, item.household_id);
+            if (name === "set_chore_archived") {
+              if (item.version !== payload.expected_version)
+                throw new Error("This chore changed. Refresh and try again.");
+              item.archived = payload.is_archived;
+              item.version++;
+            } else if (name === "log_chore_completion") {
+              const result = makeChoreCompletion(
+                item,
+                db.choreCompletions!,
+                db.members.filter((m) => m.household_id === item.household_id),
+                user.id,
+                payload.completion_id,
+                payload.completed_on,
+                payload.expected_version,
+                payload.client_timezone,
+              );
+              if (!result.replayed) {
+                db.chores = db.chores!.map((c) =>
+                  c.id === item.id ? result.chore : c,
+                );
+                db.choreCompletions!.push(result.completion);
+              }
+            } else {
+              if (!entry) throw new Error("Completion unavailable.");
+              const result = undoChoreCompletion(item, entry, user.id);
+              db.chores = db.chores!.map((c) =>
+                c.id === item.id ? result.chore : c,
+              );
+              db.choreCompletions = db.choreCompletions!.map((c) =>
+                c.id === entry.id ? result.completion : c,
+              );
+            }
+            await save(db);
+            return json(null);
+          }
           if (name === "save_shopping_item") {
             const item = payload.payload as ShoppingItem;
             requireHouse(db, user.id, item.household_id);
@@ -610,6 +706,14 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               (e) =>
                 e.household_id === active?.household_id &&
                 e.household_id === filter("household_id"),
+            );
+          else if (table === "chores" || table === "chore_completions")
+            rows = (
+              table === "chores" ? db.chores! : db.choreCompletions!
+            ).filter(
+              (c) =>
+                c.household_id === active?.household_id &&
+                c.household_id === filter("household_id"),
             );
           else if (table === "shopping_items")
             rows = db.shoppingItems!.filter(

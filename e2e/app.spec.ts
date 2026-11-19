@@ -389,3 +389,39 @@ test("household names persist and long names keep phone and desktop navigation u
   expect(avatar).not.toBeNull();
   expect(avatar!.x + avatar!.width).toBeLessThanOrEqual(1000);
 });
+
+test("phone: normal demo persists chore completion and its fixed assignment", async ({
+  page,
+}) => {
+  await page.getByRole("tab", { name: "Chore Tracker", exact: true }).click();
+  await page.getByRole("button", { name: "Custom chore", exact: true }).click();
+  await page.getByLabel("Chore name", { exact: true }).fill("Water herbs");
+  await page.getByRole("button", { name: "Alex Morgan", exact: true }).click();
+  await page.getByRole("button", { name: "Daily", exact: true }).click();
+  await page.getByRole("button", { name: "Save chore", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Log completion for Water herbs",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByLabel("Completed on (YYYY-MM-DD)", { exact: true })
+    .fill("2026-01-02");
+  await page
+    .getByRole("button", { name: "Save completion", exact: true })
+    .click();
+  await page.reload();
+  await page.getByRole("tab", { name: "Chore Tracker", exact: true }).click();
+  await expect(
+    page.getByText("Assigned to Alex Morgan", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Completion history", exact: true })
+    .click();
+  await expect(
+    page.getByText("Alex Morgan completed this on 2026-01-02.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+});

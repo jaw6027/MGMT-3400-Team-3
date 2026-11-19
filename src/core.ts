@@ -56,7 +56,46 @@ export type ShoppingItem = {
   created_at: string;
   created_by?: string;
 };
+export type Chore = {
+  id: string;
+  household_id: string;
+  catalog_id: string | null;
+  name: string;
+  frequency: "Daily" | "Weekly" | "Biweekly" | "Monthly";
+  assignment_mode: "fixed" | "rotate";
+  member_ids: string[];
+  assigned_to: string;
+  next_due_date: string;
+  archived: boolean;
+  version: number;
+  created_at: string;
+  created_by?: string;
+  updated_at?: string;
+};
+export type ChoreCompletion = {
+  id: string;
+  household_id: string;
+  chore_id: string;
+  chore_name: string;
+  completed_by: string;
+  recorded_by: string;
+  completed_on: string;
+  scheduled_for: string;
+  scheduled_member_id: string;
+  frequency: Chore["frequency"];
+  assignment_mode: Chore["assignment_mode"];
+  before_due_date: string;
+  before_assigned_to: string;
+  advanced_schedule: boolean;
+  after_version: number;
+  timezone: string;
+  created_at: string;
+  voided_at: string | null;
+  voided_by?: string | null;
+};
 export type Data = {
+  chores?: Chore[];
+  choreCompletions?: ChoreCompletion[];
   shoppingItems?: ShoppingItem[];
   cashPayments?: CashPayment[];
   household: Household | null;

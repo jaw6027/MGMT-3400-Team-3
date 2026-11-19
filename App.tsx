@@ -1,3 +1,4 @@
+import ChoreTracker from "./src/ChoreTracker";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -82,10 +83,17 @@ import {
 } from "./src/browserPreview";
 import ShoppingList from "./src/ShoppingList";
 import { purchaseCategory } from "./src/shopping";
-type Tab = "Overview" | "Shopping" | "Purchases" | "Balances" | "Household";
+type Tab =
+  | "Chore Tracker"
+  | "Overview"
+  | "Shopping"
+  | "Purchases"
+  | "Balances"
+  | "Household";
 const tabs: { name: Tab; icon: IconName }[] = [
   { name: "Overview", icon: "Home" },
   { name: "Shopping", icon: "ShoppingBasket" },
+  { name: "Chore Tracker", icon: "CheckCircle2" },
   { name: "Purchases", icon: "Receipt" },
   { name: "Balances", icon: "Wallet" },
   { name: "Household", icon: "Users" },
@@ -897,6 +905,7 @@ function Main() {
                   </View>
                 </>
               )}
+              {tab === "Chore Tracker" && <ChoreTracker />}
               {tab === "Shopping" && (
                 <ShoppingList
                   onPurchase={(item) => {
@@ -944,9 +953,17 @@ function Main() {
                 <Pressable
                   accessibilityRole="tab"
                   accessibilityState={{ selected: tab === t.name }}
+                  accessibilityLabel={t.name}
                   key={t.name}
                   onPress={() => nav(t.name)}
-                  style={{ flex: 1, alignItems: "center", gap: 4, padding: 7 }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    alignItems: "center",
+                    gap: 4,
+                    paddingVertical: 7,
+                    paddingHorizontal: 2,
+                  }}
                 >
                   <Icon
                     name={t.icon}
@@ -954,13 +971,16 @@ function Main() {
                     size={21}
                   />
                   <Txt
+                    numberOfLines={1}
                     style={{
+                      maxWidth: "100%",
+                      textAlign: "center",
                       fontSize: 10,
                       color: tab === t.name ? C.green : C.muted,
                       fontFamily: tab === t.name ? "DMBold" : "DM",
                     }}
                   >
-                    {t.name}
+                    {t.name === "Chore Tracker" ? "Chores" : t.name}
                   </Txt>
                 </Pressable>
               ))}

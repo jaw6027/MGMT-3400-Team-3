@@ -179,7 +179,9 @@ async function backend(page: Page) {
         path.endsWith("/expenses") ||
         path.endsWith("/repayments") ||
         path.endsWith("/cash_payments") ||
-        path.endsWith("/shopping_items")
+        path.endsWith("/shopping_items") ||
+        path.endsWith("/chores") ||
+        path.endsWith("/chore_completions")
       ) {
         await respond([]);
         return;

@@ -1,4 +1,11 @@
 import {
+  canonicalChoreName,
+  validateChore,
+  makeChoreCompletion,
+  undoChoreCompletion,
+  choreTimezone,
+} from "./chores";
+import {
   DUPLICATE_MESSAGE,
   matchingPayment,
 } from "../supabase/functions/_shared/payment-safety";
@@ -18,6 +25,8 @@ import {
   Repayment,
   CashPayment,
   ShoppingItem,
+  Chore,
+  ChoreCompletion,
   validateExpense,
   canEdit,
   validDate,
@@ -342,6 +351,117 @@ export function Provider({ children }: { children: React.ReactNode }) {
       await refresh();
     }
   };
+  const saveChore = async (item: Chore) => {
+    if (item.household_id !== dataRef.current.household?.id)
+      throw new Error("Choose a chore from this household.");
+    validateChore(item, dataRef.current.members);
+    if (demo) {
+      const old = dataRef.current.chores?.find((c) => c.id === item.id);
+      if (old && old.version !== item.version)
+        throw new Error(
+          "This chore changed. Close and reopen it before saving.",
+        );
+      await persist({
+        ...dataRef.current,
+        chores: [
+          {
+            ...item,
+            name: canonicalChoreName(item.name, item.catalog_id),
+            version: (old?.version || 0) + 1,
+            created_by: old?.created_by || user!.id,
+            created_at: old?.created_at || item.created_at,
+          },
+          ...(dataRef.current.chores || []).filter((c) => c.id !== item.id),
+        ],
+      });
+    } else {
+      const { error } = await client().rpc("save_chore", { payload: item });
+      if (error) throw error;
+      await refresh();
+    }
+  };
+  const setChoreArchived = async (item: Chore, archived: boolean) => {
+    if (demo) {
+      const current = dataRef.current.chores?.find((c) => c.id === item.id);
+      if (!current || current.version !== item.version)
+        throw new Error("This chore changed. Refresh and try again.");
+      await persist({
+        ...dataRef.current,
+        chores: dataRef.current.chores!.map((c) =>
+          c.id === item.id ? { ...c, archived, version: c.version + 1 } : c,
+        ),
+      });
+    } else {
+      const { error } = await client().rpc("set_chore_archived", {
+        chore_id: item.id,
+        is_archived: archived,
+        expected_version: item.version,
+      });
+      if (error) throw error;
+      await refresh();
+    }
+  };
+  const logChore = async (item: Chore, date: string, id: string) => {
+    if (demo) {
+      const current = dataRef.current.chores?.find((c) => c.id === item.id);
+      if (!current) throw new Error("Chore unavailable.");
+      const result = makeChoreCompletion(
+        current,
+        dataRef.current.choreCompletions || [],
+        dataRef.current.members,
+        user!.id,
+        id,
+        date,
+        item.version,
+        choreTimezone(),
+      );
+      if (!result.replayed)
+        await persist({
+          ...dataRef.current,
+          chores: dataRef.current.chores!.map((c) =>
+            c.id === item.id ? result.chore : c,
+          ),
+          choreCompletions: [
+            result.completion,
+            ...(dataRef.current.choreCompletions || []),
+          ],
+        });
+    } else {
+      const { error } = await client().rpc("log_chore_completion", {
+        completion_id: id,
+        chore_id: item.id,
+        completed_on: date,
+        expected_version: item.version,
+        client_timezone: choreTimezone(),
+      });
+      if (error) throw error;
+      await refresh();
+    }
+  };
+  const undoChore = async (entry: ChoreCompletion) => {
+    if (demo) {
+      const current = dataRef.current.chores?.find(
+        (c) => c.id === entry.chore_id,
+      );
+      if (!current) throw new Error("Chore unavailable.");
+      const result = undoChoreCompletion(current, entry, user!.id);
+      await persist({
+        ...dataRef.current,
+        chores: dataRef.current.chores!.map((c) =>
+          c.id === current.id ? result.chore : c,
+        ),
+        choreCompletions: dataRef.current.choreCompletions!.map((c) =>
+          c.id === entry.id ? result.completion : c,
+        ),
+      });
+    } else {
+      const { error } = await client().rpc("undo_chore_completion", {
+        completion_id: entry.id,
+      });
+      if (error) throw error;
+      await refresh();
+    }
+  };
   const repay = async (r: Repayment) => {
     if (r.method === "cash")
       throw new Error(
@@ -568,6 +688,12 @@ export function Provider({ children }: { children: React.ReactNode }) {
       value={{
         ...data,
         shoppingItems: data.shoppingItems || [],
+        chores: data.chores || [],
+        choreCompletions: data.choreCompletions || [],
+        saveChore,
+        setChoreArchived,
+        logChore,
+        undoChore,
         saveShoppingItem,
         deleteShoppingItem,
         recovering,
@@ -636,6 +762,12 @@ export function useStore(): Data & {
   setError: (s: string) => void;
   refresh: () => Promise<void>;
   shoppingItems: ShoppingItem[];
+  chores: Chore[];
+  choreCompletions: ChoreCompletion[];
+  saveChore: (item: Chore) => Promise<void>;
+  setChoreArchived: (item: Chore, archived: boolean) => Promise<void>;
+  logChore: (item: Chore, date: string, id: string) => Promise<void>;
+  undoChore: (entry: ChoreCompletion) => Promise<void>;
   saveShoppingItem: (item: ShoppingItem) => Promise<void>;
   deleteShoppingItem: (id: string) => Promise<void>;
   saveExpense: (e: Expense, shoppingId?: string) => Promise<void>;

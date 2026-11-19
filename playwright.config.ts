@@ -5,6 +5,7 @@ export default defineConfig({
     "**/households.spec.ts",
     "**/browser-preview.spec.ts",
     "**/shopping-preview.spec.ts",
+    "**/chores-preview.spec.ts",
   ],
   fullyParallel: false,
   workers: 1,

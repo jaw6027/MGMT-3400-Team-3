@@ -87,6 +87,8 @@ export async function loadData(): Promise<Data> {
     repayments,
     cashPayments,
     shoppingItems,
+    chores,
+    choreCompletions,
   ] = await Promise.all([
     c.from("households").select("*").eq("id", id).single(),
     all("members"),
@@ -94,6 +96,8 @@ export async function loadData(): Promise<Data> {
     all("repayments"),
     all("cash_payments"),
     all("shopping_items"),
+    all("chores"),
+    all("chore_completions"),
   ]);
   if (household.error) throw household.error;
   return {
@@ -103,6 +107,8 @@ export async function loadData(): Promise<Data> {
     repayments,
     cashPayments,
     shoppingItems,
+    chores,
+    choreCompletions,
   };
 }
 export async function saveLiveExpense(e: Expense) {

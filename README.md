@@ -10,6 +10,7 @@ This is a self-contained export of the actual Expo web app, including:
 
 - Separate local preview logins and signup; creating/naming a household, copying codes, joining with another account, renaming, profiles, leaving and rejoining.
 - Shopping plans from 61 spreadsheet items, custom expenses, purchaser assignments, last-buyer memory, and one-time flags.
+- **Chore Tracker** with 19 spreadsheet chores, custom chores, recurring schedules, fixed or rotating members, and dated completion history.
 - Purchases, camera/library receipt attachment, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
 - Balances, settlement suggestions, manual repayment history, and sample bank/card payments with surcharge previews.
 - Monthly dues and bank-autopay consent, reminder preferences, and simulated phone verification (code **123456**).
@@ -111,6 +112,20 @@ One-time purchases stay in history but have no **Buy again** shortcut and do not
 
 For live storage, apply **`supabase/migrations/202611190002_shopping_list.sql`** after earlier migrations. It seeds the same catalog, adds private household list storage, preserves existing expense validation/permissions, and records list completion and expense shares in one transaction. Only authenticated active household members can read/write their household’s plans; direct table writes and hidden base-expense RPC calls are denied. Duplicate completion requests cannot create a second expense. Both normal demo mode and the self-contained browser preview support the shopping flow without backend credentials.
 
+## Chore Tracker
+
+Open **Chore Tracker** (the **Chores** tab on phones). Choose **Add chore** to pick one of all **19 chores** from *Chore Chart - SplitCart.xlsx*, or **Custom chore** to name your own. The spreadsheet contains a single “Chore List” heading; its rows are kept in order. Trailing whitespace is trimmed and “Refridgerator” is displayed as “Refrigerator”; the original spelling remains in catalog `source_name` for reference.
+
+Choose **Daily**, **Weekly**, **Biweekly** (14 days), or **Monthly**, and an initial due date. **Fixed member** assigns one current roommate indefinitely, until edited. **Take turns** uses at least two selected roommates, in selection order; choose the first member separately. Completing a chore advances to the member after the actual completer in that roster, skipping people who have left. Any current household member may help with another person’s assigned chore, but completion credit always belongs to the logged-in account.
+
+**Log completion** lets you enter the day you actually did the chore, previews the next assignment/due date, and records it in **Completion history**. The next due date is based on the completed day, rather than the missed due date. Monthly dates clamp to the last day when necessary (January 31 → February 28/29). Older, backfilled completions add history without resetting the upcoming turn or date. Future dates are rejected using the device’s time zone (checked against server time in live mode). One completion per chore per calendar day is allowed; chores do not automatically mark themselves complete.
+
+**Edit** changes upcoming chores. **Archive** removes a chore from Upcoming and retains its history; archived chores can be edited and restored. Users can **Undo my completion** only on their own most recent unchanged chore action. Undo restores the prior schedule and keeps the original record labeled **Undone**. Later edits, archiving, or completions prevent rollback of an older action. Leaving a household revokes access and preserves history; rotating chores skip departed roommates. If a fixed assignee leaves, reassign the chore before logging it.
+
+Both demo modes support this feature without credentials; browser preview data stays in that browser. For a real shared backend, apply **`supabase/migrations/202611190003_chore_tracker.sql`** after the earlier migrations before deploying this app. It seeds the same catalog, enables household-scoped RLS, denies direct chore/history writes, derives completion authors from authentication, and serializes version-checked schedule changes and completion logging in database transactions. No new environment variables or external AI/payment services are needed for chores. Recurrence is a due-date tracker; background reminders and push notifications are not included.
+
+Screenshots from the actual browser preview: [Chore Tracker](docs/previews/chore-tracker.png) and [completion history](docs/previews/chore-history.png).
+
 ## Money, permissions, and reliability
 
 All money is stored and calculated in **integer cents**. Decimal strings are parsed without multiplying floating-point input. Equal splits sort membership IDs and distribute the remaining cents one by one, so shares always total the purchase. Custom splits must match exactly; individual shares may be zero. Purchase/repayment totals are capped at 1,000,000 currency units.
@@ -131,7 +146,7 @@ npm run build:web
 npx expo export --platform ios --platform android
 ```
 
-`npm test` runs money/balance tests and **executes the application migrations against PostgreSQL through PGlite**, using minimal Supabase auth/storage scaffolding. It tests cross-household read/write isolation, anonymous access denial, payer-only mutations, transactional share validation, retry deduplication, repayment permissions, private receipt policies, and history retention/revocation after leaving. This exercises real SQL and RLS, but does not emulate the Supabase Auth or Storage HTTP services.
+`npm test` runs money/balance tests and **executes the application migrations against PostgreSQL through PGlite**, using minimal Supabase auth/storage scaffolding. It tests cross-household read/write isolation, anonymous access denial, payer-only mutations, transactional share validation, retry deduplication, repayment permissions, private receipt policies, and history retention/revocation after leaving. Chore tests cover all four recurrences, monthly/leap-year rounding, fixed and rotating assignments, departed members, backdated/future dates, duplicate/stale submissions, authorized undo, and private history. This exercises real SQL and RLS, but does not emulate the Supabase Auth or Storage HTTP services.
 
 Browser tests:
 
@@ -156,6 +171,7 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 
 - `App.tsx` — responsive navigation, dashboard, history, forms, details, balances, accounts, settings.
 - `src/core.ts` — integer money, validation, equal splits, balances, settlements, client permission helpers.
+- `src/ChoreTracker.tsx`, `src/chores.ts`, `src/choreCatalog.ts` — spreadsheet/custom chores, recurrence, rotation, and dated household completion history.
 - `src/ShoppingList.tsx`, `src/shopping.ts`, `src/shoppingCatalog.ts` — categorized planning, spreadsheet catalog, assignments, factual purchase memory, and repeat-buyer suggestions.
 - `src/backend.ts` — Supabase setup, paginated reads, private receipt uploads and signed URLs.
 - `src/store.tsx` — demo/live state, sessions, persistence, mutations.
