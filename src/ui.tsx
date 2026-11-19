@@ -2,6 +2,9 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
+  Modal,
+  ScrollView,
+  useWindowDimensions,
   Pressable,
   StyleSheet,
   Text,
@@ -499,3 +502,67 @@ export const s = StyleSheet.create({
   gap: { gap: 18 },
   link: { color: C.green, fontFamily: "DMBold", fontSize: 12 },
 });
+
+export function Sheet({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const { width } = useWindowDimensions();
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onClose}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "rgba(22,40,29,0.36)",
+          justifyContent: "center",
+          alignItems: "center",
+          padding: width > 600 ? 28 : 10,
+        }}
+      >
+        <View
+          style={{
+            width: "100%",
+            maxWidth: 620,
+            maxHeight: "95%",
+            backgroundColor: C.bg,
+            borderRadius: 20,
+            overflow: "hidden",
+          }}
+        >
+          <View
+            style={[
+              s.between,
+              {
+                padding: 21,
+                borderBottomWidth: 1,
+                borderColor: C.line,
+                backgroundColor: C.white,
+              },
+            ]}
+          >
+            <Title style={{ fontSize: 25 }}>{title}</Title>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close dialog"
+              onPress={onClose}
+              style={{ padding: 7 }}
+            >
+              <Icon name="X" />
+            </Pressable>
+          </View>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: 23, gap: 20 }}
+          >
+            {children}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}

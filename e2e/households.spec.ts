@@ -178,7 +178,8 @@ async function backend(page: Page) {
       if (
         path.endsWith("/expenses") ||
         path.endsWith("/repayments") ||
-        path.endsWith("/cash_payments")
+        path.endsWith("/cash_payments") ||
+        path.endsWith("/shopping_items")
       ) {
         await respond([]);
         return;

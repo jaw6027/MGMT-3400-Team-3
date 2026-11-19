@@ -9,6 +9,7 @@ A friendly, phone-first household expense app built with **Expo SDK 54, React Na
 This is a self-contained export of the actual Expo web app, including:
 
 - Separate local preview logins and signup; creating/naming a household, copying codes, joining with another account, renaming, profiles, leaving and rejoining.
+- Shopping plans from 61 spreadsheet items, custom expenses, purchaser assignments, last-buyer memory, and one-time flags.
 - Purchases, camera/library receipt attachment, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
 - Balances, settlement suggestions, manual repayment history, and sample bank/card payments with surcharge previews.
 - Monthly dues and bank-autopay consent, reminder preferences, and simulated phone verification (code **123456**).
@@ -96,6 +97,20 @@ Use the displayed local API URL and anon key. The included config enables local 
 - Net balances and simplified settlement suggestions across all purchases and recorded repayments, including former roommates. Record a repayment you sent or received; it is clearly labeled and does **not** transfer money.
 - Friendly empty/loading/error states, validation, duplicate-submit guards, stable purchase/repayment IDs, and local demo persistence.
 
+## Household shopping list
+
+Open **Shopping → Add item**. The catalog imports all **61 items** from *Shared Expense List - Split Cart.xlsx*, grouped by its eight bold headings: **Utilities, Food, Household Items, Furniture, Kitchen, Bathroom, Pet Supplies, Subscription Services**. Original item names and order are preserved; heading colons and trailing cell whitespace are trimmed. **Other** is available for custom expenses. The workbook is treated as data and is not shipped with its personal file metadata.
+
+Choose a catalog item, or select **Custom expense** and enter a name/category. Choose a current roommate under **Who will purchase this?** before adding it. Mark **One-time purchase** if appropriate. Planned items can be reassigned or removed with confirmation. Plans do not affect anyone’s balance.
+
+Use **Log purchase** to enter the actual total, date, payer, receipt and individual shares through the existing purchase form. Saving creates the expense and completes the plan atomically. The actual payer can differ from the assigned shopper. One-time status can be chosen at planning time or on any purchase form, and is visible in purchase history/details. Purchased items retain their history; use the original purchase’s edit/delete permissions for corrections.
+
+**Purchase memory** automatically shows the latest actual payer and date for that item after a linked purchase is logged. For repeat buys, it suggests the next active roommate after the previous buyer and always lets the user override the assignment. This is deterministic history-based automation, not an external AI model: it does not guess who bought an item, treat an assignment as a purchase, or infer receipt line items. Imported catalog IDs keep items consistent; custom names are matched case-insensitively within the same shopping category. Unlinked older purchases are not guessed from their names.
+
+One-time purchases stay in history but have no **Buy again** shortcut and do not trigger a next-buyer suggestion. Users can explicitly add the item again if their plans change. Editing a linked expense updates its payer/date and one-time status in purchase memory. Deleting the expense reopens its planned item and removes that deleted purchase from memory. Former roommates’ historical purchases remain visible to current household members.
+
+For live storage, apply **`supabase/migrations/202611190002_shopping_list.sql`** after earlier migrations. It seeds the same catalog, adds private household list storage, preserves existing expense validation/permissions, and records list completion and expense shares in one transaction. Only authenticated active household members can read/write their household’s plans; direct table writes and hidden base-expense RPC calls are denied. Duplicate completion requests cannot create a second expense. Both normal demo mode and the self-contained browser preview support the shopping flow without backend credentials.
+
 ## Money, permissions, and reliability
 
 All money is stored and calculated in **integer cents**. Decimal strings are parsed without multiplying floating-point input. Equal splits sort membership IDs and distribute the remaining cents one by one, so shares always total the purchase. Custom splits must match exactly; individual shares may be zero. Purchase/repayment totals are capped at 1,000,000 currency units.
@@ -116,7 +131,7 @@ npm run build:web
 npx expo export --platform ios --platform android
 ```
 
-`npm test` runs money/balance tests and **executes the unchanged application migration against PostgreSQL through PGlite**, using minimal Supabase auth/storage scaffolding. It tests cross-household read/write isolation, anonymous access denial, payer-only mutations, transactional share validation, retry deduplication, repayment permissions, private receipt policies, and history retention/revocation after leaving. This exercises real SQL and RLS, but does not emulate the Supabase Auth or Storage HTTP services.
+`npm test` runs money/balance tests and **executes the application migrations against PostgreSQL through PGlite**, using minimal Supabase auth/storage scaffolding. It tests cross-household read/write isolation, anonymous access denial, payer-only mutations, transactional share validation, retry deduplication, repayment permissions, private receipt policies, and history retention/revocation after leaving. This exercises real SQL and RLS, but does not emulate the Supabase Auth or Storage HTTP services.
 
 Browser tests:
 
@@ -135,12 +150,13 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 - A manually recorded repayment is an append-only ledger entry; editing/reversing manual repayments is not included. Double-check before confirming.
 - Client deletion removes a purchase and its shares. Original receipt files remain private, including abandoned uploads. Add a trusted scheduled cleanup job after choosing a retention policy; no service credentials belong in the client.
 - No invite rotation, account deletion/export UI, or household administration roles in this MVP. Account erasure should use a trusted server-side process that preserves/anonymizes the ledger appropriately.
-- Receipt recognition, subscriptions, shopping lists, and currency conversion are deliberately deferred. Live bank/card processing and text/email reminders require the provider deployment described below.
+- Receipt recognition, subscriptions, and currency conversion are deliberately deferred. Live bank/card processing and text/email reminders require the provider deployment described below.
 
 ## Project map
 
 - `App.tsx` — responsive navigation, dashboard, history, forms, details, balances, accounts, settings.
 - `src/core.ts` — integer money, validation, equal splits, balances, settlements, client permission helpers.
+- `src/ShoppingList.tsx`, `src/shopping.ts`, `src/shoppingCatalog.ts` — categorized planning, spreadsheet catalog, assignments, factual purchase memory, and repeat-buyer suggestions.
 - `src/backend.ts` — Supabase setup, paginated reads, private receipt uploads and signed URLs.
 - `src/store.tsx` — demo/live state, sessions, persistence, mutations.
 - `src/households.ts` — signup household choices, validation, email-bound continuation, and setup RPC calls.

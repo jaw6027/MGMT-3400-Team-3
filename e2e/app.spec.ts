@@ -219,14 +219,17 @@ test("payments: credit surcharge is disclosed and only principal settles the dem
     page.getByText("Receiving payments is ready.", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Pay", exact: true }).click();
+  // Use a different amount: the earlier card payment is intentionally protected
+  // by the new ten-minute duplicate-payment guard.
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("10.21");
   await expect(
-    page.getByText("Estimated total: $10.20", { exact: true }),
+    page.getByText("Estimated total: $10.21", { exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Review payment", exact: true })
     .click();
   await expect(
-    page.getByText("Total charged: $10.20", { exact: true }),
+    page.getByText("Total charged: $10.21", { exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Cancel payment review", exact: true })

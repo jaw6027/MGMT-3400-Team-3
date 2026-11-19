@@ -17,6 +17,7 @@ import {
   Expense,
   Repayment,
   CashPayment,
+  ShoppingItem,
   validateExpense,
   canEdit,
   validDate,
@@ -38,6 +39,7 @@ import {
   pendingHousehold,
 } from "./households";
 import { browserPreviewEnabled, browserPreviewBackend } from "./browserPreview";
+import { validateShoppingItem } from "./shopping";
 type AccountUser = { id: string; name: string; email?: string };
 const empty: Data = {
   household: null,
@@ -227,18 +229,45 @@ export function Provider({ children }: { children: React.ReactNode }) {
     setData(d);
     dataRef.current = d;
   };
-  const saveExpense = async (e: Expense) => {
+  const saveExpense = async (e: Expense, shoppingId?: string) => {
     validateExpense(e, dataRef.current.members);
     const old = dataRef.current.expenses.find((x) => x.id === e.id);
     if (old && !canEdit(user!.id, old, dataRef.current.members))
       throw new Error("Only the roommate who paid can change this purchase.");
-    if (demo)
+    if (demo) {
+      const list = dataRef.current.shoppingItems || [];
+      const plan = shoppingId
+        ? list.find(
+            (s) => s.id === shoppingId && s.household_id === e.household_id,
+          )
+        : null;
+      if (shoppingId && !plan)
+        throw new Error("This shopping item is not available.");
+      if (plan?.expense_id && plan.expense_id !== e.id)
+        throw new Error(
+          "This shopping item already has a recorded purchase. Refresh the list.",
+        );
+      e = {
+        ...e,
+        one_time: e.one_time ?? old?.one_time ?? plan?.one_time ?? false,
+      };
       await persist({
         ...dataRef.current,
         expenses: [e, ...dataRef.current.expenses.filter((x) => x.id !== e.id)],
+        shoppingItems: list.map((s) =>
+          s.id === shoppingId || s.expense_id === e.id
+            ? { ...s, expense_id: e.id, one_time: Boolean(e.one_time) }
+            : s,
+        ),
       });
-    else {
-      await saveLiveExpense(e);
+    } else {
+      if (shoppingId) {
+        const { error } = await client().rpc("save_shopping_purchase", {
+          shopping_id: shoppingId,
+          payload: e,
+        });
+        if (error) throw error;
+      } else await saveLiveExpense(e);
       await refresh();
     }
   };
@@ -249,10 +278,65 @@ export function Provider({ children }: { children: React.ReactNode }) {
       await persist({
         ...dataRef.current,
         expenses: dataRef.current.expenses.filter((x) => x.id !== e.id),
+        shoppingItems: (dataRef.current.shoppingItems || []).map((s) =>
+          s.expense_id === e.id ? { ...s, expense_id: null } : s,
+        ),
       });
     else {
       const { error } = await client().rpc("delete_expense", {
         expense_id: e.id,
+      });
+      if (error) throw error;
+      await refresh();
+    }
+  };
+  const saveShoppingItem = async (item: ShoppingItem) => {
+    if (item.household_id !== dataRef.current.household?.id)
+      throw new Error("Choose an item from this household.");
+    validateShoppingItem(item, dataRef.current.members);
+    const old = dataRef.current.shoppingItems?.find((s) => s.id === item.id);
+    if (old?.expense_id)
+      throw new Error(
+        "Purchased items stay in history. Edit the linked purchase instead.",
+      );
+    if (demo)
+      await persist({
+        ...dataRef.current,
+        shoppingItems: [
+          {
+            ...item,
+            created_by: old?.created_by || user!.id,
+            created_at: old?.created_at || item.created_at,
+          },
+          ...(dataRef.current.shoppingItems || []).filter(
+            (s) => s.id !== item.id,
+          ),
+        ],
+      });
+    else {
+      const { error } = await client().rpc("save_shopping_item", {
+        payload: item,
+      });
+      if (error) throw error;
+      await refresh();
+    }
+  };
+  const deleteShoppingItem = async (id: string) => {
+    const item = dataRef.current.shoppingItems?.find((s) => s.id === id);
+    if (!item || item.expense_id)
+      throw new Error(
+        "Only planned items can be removed. Purchased items stay in history.",
+      );
+    if (demo)
+      await persist({
+        ...dataRef.current,
+        shoppingItems: (dataRef.current.shoppingItems || []).filter(
+          (s) => s.id !== id,
+        ),
+      });
+    else {
+      const { error } = await client().rpc("delete_shopping_item", {
+        shopping_id: id,
       });
       if (error) throw error;
       await refresh();
@@ -483,6 +567,9 @@ export function Provider({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{
         ...data,
+        shoppingItems: data.shoppingItems || [],
+        saveShoppingItem,
+        deleteShoppingItem,
         recovering,
         completeRecovery: () => setRecovering(false),
         user,
@@ -548,7 +635,10 @@ export function useStore(): Data & {
   error: string;
   setError: (s: string) => void;
   refresh: () => Promise<void>;
-  saveExpense: (e: Expense) => Promise<void>;
+  shoppingItems: ShoppingItem[];
+  saveShoppingItem: (item: ShoppingItem) => Promise<void>;
+  deleteShoppingItem: (id: string) => Promise<void>;
+  saveExpense: (e: Expense, shoppingId?: string) => Promise<void>;
   deleteExpense: (e: Expense) => Promise<void>;
   repay: (r: Repayment) => Promise<void>;
   proposeCash: (r: Repayment) => Promise<void>;

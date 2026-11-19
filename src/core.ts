@@ -6,6 +6,7 @@ export type Member = {
 };
 export type Share = { member_id: string; cents: number };
 export type Expense = {
+  one_time?: boolean;
   id: string;
   household_id: string;
   name: string;
@@ -42,7 +43,21 @@ export type CashPayment = Repayment & {
   resolved_at?: string;
   created_at: string;
 };
+export type ShoppingItem = {
+  id: string;
+  household_id: string;
+  name: string;
+  category: string;
+  catalog_id: string | null;
+  item_key: string;
+  assigned_to: string;
+  one_time: boolean;
+  expense_id: string | null;
+  created_at: string;
+  created_by?: string;
+};
 export type Data = {
+  shoppingItems?: ShoppingItem[];
   cashPayments?: CashPayment[];
   household: Household | null;
   members: Member[];
@@ -88,6 +103,8 @@ export const validDate = (value: string) =>
   Number.isFinite(new Date(value).getTime()) &&
   new Date(value).toISOString().slice(0, 10) === value;
 export function validateExpense(e: Expense, members: Member[]) {
+  if (e.one_time !== undefined && typeof e.one_time !== "boolean")
+    throw new Error("Choose whether this was a one-time purchase.");
   if (!e.name.trim() || e.name.trim().length > 120)
     throw new Error("Add an item name, up to 120 characters.");
   if (!Number.isSafeInteger(e.cents) || e.cents <= 0 || e.cents > 100000000)

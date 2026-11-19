@@ -5,6 +5,7 @@ import * as Crypto from "expo-crypto";
 import { Platform } from "react-native";
 import {
   Expense,
+  ShoppingItem,
   Household,
   Member,
   Repayment,
@@ -14,6 +15,7 @@ import {
   validateImage,
   validDate,
 } from "./core";
+import { canonicalShoppingItem, validateShoppingItem } from "./shopping";
 import { demoData, demoReceipt } from "./demo";
 import { householdName } from "./households";
 export const browserPreviewEnabled =
@@ -32,6 +34,7 @@ type User = {
 };
 type PreviewMember = Member & { household_id: string };
 type Database = {
+  shoppingItems?: ShoppingItem[];
   cashPayments?: CashPayment[];
   users: User[];
   households: Household[];
@@ -144,6 +147,7 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
     return m;
   };
   const ensureMemberHouses = (db: Database) => {
+    db.shoppingItems ||= [];
     db.members = db.members.map((m) => ({
       ...m,
       household_id: (m as PreviewMember).household_id || "demo-house",
@@ -390,9 +394,88 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
             await save(db);
             return json(null);
           }
-          if (name === "save_expense") {
+          if (name === "save_shopping_item") {
+            const item = payload.payload as ShoppingItem;
+            requireHouse(db, user.id, item.household_id);
+            const old = db.shoppingItems!.find((s) => s.id === item.id);
+            if (old && old.household_id !== item.household_id)
+              throw new Error(
+                "This shopping item belongs to another household.",
+              );
+            if (old?.expense_id)
+              throw new Error(
+                "Purchased items stay in history. Edit the linked purchase instead.",
+              );
+            const normalized = {
+              ...item,
+              ...canonicalShoppingItem(
+                item.name,
+                item.category,
+                item.catalog_id,
+              ),
+              expense_id: null,
+              created_by: old?.created_by || user.id,
+              created_at: old?.created_at || new Date().toISOString(),
+            };
+            validateShoppingItem(
+              normalized,
+              db.members.filter((m) => m.household_id === item.household_id),
+            );
+            db.shoppingItems = [
+              normalized,
+              ...db.shoppingItems!.filter((s) => s.id !== item.id),
+            ];
+            await save(db);
+            return json(item.id);
+          }
+          if (name === "delete_shopping_item") {
+            const item = db.shoppingItems!.find(
+              (s) => s.id === payload.shopping_id,
+            );
+            if (!item) throw new Error("This shopping item is not available.");
+            requireHouse(db, user.id, item.household_id);
+            if (item.expense_id)
+              throw new Error(
+                "Purchased items stay in history. Delete the linked purchase to correct it.",
+              );
+            db.shoppingItems = db.shoppingItems!.filter(
+              (s) => s.id !== item.id,
+            );
+            await save(db);
+            return json(null);
+          }
+          if (name === "save_expense" || name === "save_shopping_purchase") {
             const e = payload.payload as Expense;
             requireHouse(db, user.id, e.household_id);
+            const planned =
+              name === "save_shopping_purchase"
+                ? db.shoppingItems!.find(
+                    (s) =>
+                      s.id === payload.shopping_id &&
+                      s.household_id === e.household_id,
+                  )
+                : null;
+            if (name === "save_shopping_purchase") {
+              if (!planned)
+                throw new Error(
+                  "This shopping item is not available to your household.",
+                );
+              if (planned.expense_id === e.id) return json(e.id);
+              if (planned.expense_id)
+                throw new Error(
+                  "This shopping item already has a recorded purchase. Refresh the list.",
+                );
+              if (
+                !db.members.some(
+                  (m) =>
+                    m.id === e.paid_by &&
+                    m.household_id === e.household_id &&
+                    !m.left_at,
+                )
+              )
+                throw new Error("Choose a current roommate who actually paid.");
+              e.one_time ??= planned.one_time;
+            }
             const old = db.expenses.find((x) => x.id === e.id);
             if (
               old &&
@@ -425,6 +508,12 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               !db.receipts[e.receipt]
             )
               throw new Error("Attach a valid receipt first.");
+            e.one_time ??= old?.one_time || false;
+            db.shoppingItems = db.shoppingItems!.map((s) =>
+              s.id === planned?.id || s.expense_id === e.id
+                ? { ...s, expense_id: e.id, one_time: Boolean(e.one_time) }
+                : s,
+            );
             db.expenses = [
               { ...e, created_at: old?.created_at || new Date().toISOString() },
               ...db.expenses.filter((x) => x.id !== e.id),
@@ -445,6 +534,11 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               );
             db.expenses = db.expenses.filter(
               (e) => e.id !== payload.expense_id,
+            );
+            db.shoppingItems = db.shoppingItems!.map((s) =>
+              s.expense_id === payload.expense_id
+                ? { ...s, expense_id: null }
+                : s,
             );
             await save(db);
             return json(null);
@@ -516,6 +610,12 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               (e) =>
                 e.household_id === active?.household_id &&
                 e.household_id === filter("household_id"),
+            );
+          else if (table === "shopping_items")
+            rows = db.shoppingItems!.filter(
+              (s) =>
+                s.household_id === active?.household_id &&
+                s.household_id === filter("household_id"),
             );
           else if (table === "cash_payments")
             rows = (db.cashPayments || []).filter(

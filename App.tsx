@@ -34,6 +34,7 @@ import {
   categories,
   equalSplit,
   Expense,
+  ShoppingItem,
   money,
   parseMoney,
   settlements,
@@ -62,6 +63,7 @@ import {
   s,
   Title,
   Txt,
+  Sheet,
 } from "./src/ui";
 import Illustration from "./src/Illustration";
 import { AccessibilityProvider, AccessibilitySettings } from "./src/ui";
@@ -78,9 +80,12 @@ import {
   previewSampleEmail,
   previewSamplePassword,
 } from "./src/browserPreview";
-type Tab = "Overview" | "Purchases" | "Balances" | "Household";
+import ShoppingList from "./src/ShoppingList";
+import { purchaseCategory } from "./src/shopping";
+type Tab = "Overview" | "Shopping" | "Purchases" | "Balances" | "Household";
 const tabs: { name: Tab; icon: IconName }[] = [
   { name: "Overview", icon: "Home" },
+  { name: "Shopping", icon: "ShoppingBasket" },
   { name: "Purchases", icon: "Receipt" },
   { name: "Balances", icon: "Wallet" },
   { name: "Household", icon: "Users" },
@@ -177,6 +182,7 @@ function Main() {
   const [tab, setTab] = useState<Tab>("Overview");
   const [editor, setEditor] = useState<Expense | null | undefined>(undefined);
   const [detail, setDetail] = useState<Expense | null>(null);
+  const [shoppingToLog, setShoppingToLog] = useState<ShoppingItem | null>(null);
   const [repayOpen, setRepayOpen] = useState(false);
   const [receipt, setReceipt] = useState<string | null>(null);
   const [toast, setToast] = useState("");
@@ -191,6 +197,7 @@ function Main() {
   useEffect(() => {
     setTab("Overview");
     setEditor(undefined);
+    setShoppingToLog(null);
     setDetail(null);
     setRepayOpen(false);
     setReceipt(null);
@@ -890,6 +897,15 @@ function Main() {
                   </View>
                 </>
               )}
+              {tab === "Shopping" && (
+                <ShoppingList
+                  onPurchase={(item) => {
+                    setShoppingToLog(item);
+                    setEditor(null);
+                  }}
+                  onOpenPurchase={setDetail}
+                />
+              )}
               {tab === "Purchases" && (
                 <PurchaseHistory
                   onAdd={() => setEditor(null)}
@@ -991,9 +1007,14 @@ function Main() {
       {editor !== undefined && (
         <PurchaseEditor
           expense={editor}
-          onClose={() => setEditor(undefined)}
+          shoppingItem={shoppingToLog || undefined}
+          onClose={() => {
+            setEditor(undefined);
+            setShoppingToLog(null);
+          }}
           onSaved={() => {
             setEditor(undefined);
+            setShoppingToLog(null);
             notify("Purchase saved. Everyone’s share is accounted for.");
           }}
         />
@@ -1098,6 +1119,9 @@ function PurchaseRow({
           </Txt>
           {e.receipt && <Icon name="Receipt" size={11} color="#8F9A89" />}
         </View>
+        {e.one_time && (
+          <Txt style={{ fontSize: 10, color: C.green }}>One-time purchase</Txt>
+        )}
       </View>
       {e.receipt && (
         <ReceiptPhoto
@@ -1132,69 +1156,6 @@ function PurchaseRow({
       </View>
       <Icon name="ChevronRight" size={13} color="#A8B0A3" />
     </Pressable>
-  );
-}
-function Sheet({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  const { width } = useWindowDimensions();
-  return (
-    <Modal transparent animationType="fade" onRequestClose={onClose}>
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: "rgba(22,40,29,0.36)",
-          justifyContent: "center",
-          alignItems: "center",
-          padding: width > 600 ? 28 : 10,
-        }}
-      >
-        <View
-          style={{
-            width: "100%",
-            maxWidth: 620,
-            maxHeight: "95%",
-            backgroundColor: C.bg,
-            borderRadius: 20,
-            overflow: "hidden",
-          }}
-        >
-          <View
-            style={[
-              s.between,
-              {
-                padding: 21,
-                borderBottomWidth: 1,
-                borderColor: C.line,
-                backgroundColor: C.white,
-              },
-            ]}
-          >
-            <Title style={{ fontSize: 25 }}>{title}</Title>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close dialog"
-              onPress={onClose}
-              style={{ padding: 7 }}
-            >
-              <Icon name="X" />
-            </Pressable>
-          </View>
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ padding: 23, gap: 20 }}
-          >
-            {children}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
   );
 }
 function PurchaseHistory({
@@ -1519,25 +1480,40 @@ function Balances({ onRepay }: { onRepay: () => void }) {
 }
 function PurchaseEditor({
   expense,
+  shoppingItem,
   onClose,
   onSaved,
 }: {
   expense: Expense | null;
+  shoppingItem?: ShoppingItem;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const st = useStore();
   const self = st.members.find((m) => m.user_id === st.user?.id);
   const [id] = useState(expense?.id || uid());
-  const [name, setName] = useState(expense?.name || ""),
+  const [oneTime, setOneTime] = useState(
+    Boolean(expense?.one_time ?? shoppingItem?.one_time),
+  );
+  const [name, setName] = useState(expense?.name || shoppingItem?.name || ""),
     [amount, setAmount] = useState(
       expense ? (expense.cents / 100).toFixed(2) : "",
     ),
     [date, setDate] = useState(expense?.date || today()),
     [store, setStore] = useState(expense?.store || ""),
     [notes, setNotes] = useState(expense?.notes || ""),
-    [category, setCategory] = useState(expense?.category || "Groceries"),
-    [paidBy, setPaidBy] = useState(expense?.paid_by || self?.id || ""),
+    [category, setCategory] = useState(
+      expense?.category ||
+        (shoppingItem ? purchaseCategory(shoppingItem.category) : "Groceries"),
+    ),
+    [paidBy, setPaidBy] = useState(
+      expense?.paid_by ||
+        (shoppingItem &&
+        st.members.some((m) => m.id === shoppingItem.assigned_to && !m.left_at)
+          ? shoppingItem.assigned_to
+          : self?.id) ||
+        "",
+    ),
     [selected, setSelected] = useState(
       expense?.shares.map((s) => s.member_id) ||
         st.members.filter((m) => !m.left_at).map((m) => m.id),
@@ -1630,6 +1606,7 @@ function PurchaseEditor({
       const { validateExpense } = await import("./src/core");
       const purchase: Expense = {
         id,
+        one_time: oneTime,
         household_id: st.household!.id,
         name: name.trim(),
         cents: parseMoney(amount),
@@ -1671,7 +1648,7 @@ function PurchaseEditor({
           purchase.receipt = uploaded.current;
         }
       }
-      await st.saveExpense(purchase);
+      await st.saveExpense(purchase, shoppingItem?.id);
       onSaved();
     } catch (e: any) {
       setError(e.message || "Couldn’t save this purchase. Please try again.");
@@ -1925,6 +1902,43 @@ function PurchaseEditor({
           JPEG, PNG or WebP · up to 5 MB · private to your household
         </Txt>
       </View>
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityLabel="One-time purchase"
+        accessibilityState={{ checked: oneTime }}
+        aria-checked={oneTime}
+        onPress={() => setOneTime(!oneTime)}
+        style={[s.row, { gap: 10, paddingVertical: 12 }]}
+      >
+        <View
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 6,
+            borderWidth: 1,
+            borderColor: C.green,
+            backgroundColor: oneTime ? C.green : C.white,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {oneTime && <Icon name="Check" size={15} color={C.white} />}
+        </View>
+        <View style={{ flex: 1, gap: 4 }}>
+          <Txt style={{ fontFamily: "DMBold", fontSize: 13 }}>
+            One-time purchase
+          </Txt>
+          <Txt style={s.muted}>
+            Keep this in history without offering it as a repeat buy.
+          </Txt>
+        </View>
+      </Pressable>
+      {shoppingItem && (
+        <Txt style={{ color: C.green, fontSize: 12 }}>
+          Saving logs the actual purchase and completes “{shoppingItem.name}” on
+          your household shopping list.
+        </Txt>
+      )}
       <Field
         label="Notes (optional)"
         value={notes}
@@ -1991,6 +2005,9 @@ function PurchaseDetail({
           {name(e.paid_by)} paid · {shortDate(e.date)}
         </Txt>
         <Chip label={e.category} />
+        {e.one_time && (
+          <Txt style={{ color: C.green, fontSize: 12 }}>One-time purchase</Txt>
+        )}
       </View>
       <View style={[s.card, { gap: 15 }]}>
         {e.store && (
