@@ -16,6 +16,13 @@ export function SpendingBreakdown() {
         : undefined;
   const report = spendingBreakdown(st.expenses, month),
     fmt = (cents: number) => money(cents, st.household?.currency || "USD");
+  const cashback = st.expenses.reduce(
+    (sum, e) => ({
+      expected: sum.expected + (e.receipt_details?.cashbackExpectedCents || 0),
+      received: sum.received + (e.receipt_details?.cashbackReceivedCents || 0),
+    }),
+    { expected: 0, received: 0 },
+  );
   return (
     <View style={[s.card, { gap: 16 }]}>
       <Title style={{ fontSize: 25 }}>Spending by category</Title>
@@ -94,6 +101,27 @@ export function SpendingBreakdown() {
         Dining includes older “Food & drinks” purchases. Recurring bills appear
         here only after you record the paid household expense.
       </Txt>
+      {(cashback.expected > 0 || cashback.received > 0) && (
+        <View
+          style={{
+            gap: 7,
+            paddingTop: 10,
+            borderTopWidth: 1,
+            borderColor: C.line,
+          }}
+        >
+          <Txt style={{ fontFamily: "DMBold" }}>External cashback tracker</Txt>
+          <Txt>
+            Expected elsewhere: {fmt(cashback.expected)} · Reported received:{" "}
+            {fmt(cashback.received)}
+          </Txt>
+          <Txt style={s.muted}>
+            Self-reported card or retailer rewards. These amounts are not paid
+            by SplitCart, cannot be withdrawn here, and do not reduce spending
+            or roommate balances.
+          </Txt>
+        </View>
+      )}
     </View>
   );
 }

@@ -1,3 +1,11 @@
+import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
+import {
+  calculateReceipt,
+  receiptDraft,
+  detailsFromDraft,
+  ReceiptDetails,
+} from "./src/receiptItems";
+import { validateExtraction } from "./supabase/functions/_shared/receipt-extraction";
 import { SpendingBreakdown } from "./src/SpendingBreakdown";
 import ChoreTracker from "./src/ChoreTracker";
 import React, { useEffect, useRef, useState } from "react";
@@ -1566,6 +1574,14 @@ function PurchaseEditor({
     [asset, setAsset] = useState<ImagePicker.ImagePickerAsset | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [itemized, setItemized] = useState(!!expense?.receipt_details);
+  const [receiptItems, setReceiptItems] = useState(() =>
+    receiptDraft(
+      expense?.receipt_details,
+      st.members.filter((m) => !m.left_at).map((m) => m.id),
+    ),
+  );
+  const [receiptReviewed, setReceiptReviewed] = useState(false);
   const lock = useRef(false);
   const uploaded = useRef<string | null>(null);
   const available = st.members.filter(
@@ -1574,22 +1590,39 @@ function PurchaseEditor({
       expense?.shares.some((s) => s.member_id === m.id) ||
       expense?.paid_by === m.id,
   );
+  let receiptDetails: ReceiptDetails | null = null,
+    receiptCalculation: ReturnType<typeof calculateReceipt> | undefined,
+    receiptError = "";
+  if (itemized)
+    try {
+      receiptDetails = detailsFromDraft(receiptItems);
+      receiptCalculation = calculateReceipt(
+        receiptDetails,
+        st.members.map((m) => m.id),
+      );
+    } catch (e) {
+      receiptError = (e as Error).message;
+    }
   let cents = 0;
   try {
-    cents = parseMoney(amount);
+    cents = itemized ? receiptCalculation?.total || 0 : parseMoney(amount);
   } catch {}
   let shares = equalSplit(1, ["preview"]);
   try {
-    shares = custom
-      ? selected.map((member_id) => ({
-          member_id,
-          cents: parseMoney(customAmounts[member_id] || "", true),
-        }))
-      : equalSplit(cents, selected);
+    shares = itemized
+      ? receiptCalculation?.shares || []
+      : custom
+        ? selected.map((member_id) => ({
+            member_id,
+            cents: parseMoney(customAmounts[member_id] || "", true),
+          }))
+        : equalSplit(cents, selected);
   } catch {
     shares = [];
   }
   const pick = async (camera: boolean) => {
+    if (busy) return;
+    setReceiptReviewed(false);
     setError("");
     try {
       const permission = camera
@@ -1619,6 +1652,89 @@ function PurchaseEditor({
       setError(e.message);
     }
   };
+  const scanReceipt = async () => {
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      let extracted: any;
+      if (st.demo) {
+        setReceipt(demoReceipt);
+        setAsset(null);
+        uploaded.current = null;
+        extracted = {
+          merchant: "Green Market",
+          date: null,
+          currency: st.household!.currency,
+          items: [
+            { name: "Fresh produce", cents: 2450 },
+            { name: "Pantry staples", cents: 3200 },
+            { name: "Oat milk x 3", cents: 1200 },
+            { name: "Bread & eggs", cents: 1700 },
+          ],
+          taxCents: 0,
+          tipCents: 0,
+          discountCents: 0,
+          totalCents: 8550,
+        };
+      } else {
+        let path = receipt;
+        if (asset) {
+          if (!uploaded.current)
+            uploaded.current = await uploadReceipt(
+              asset,
+              st.household!.id,
+              st.user!.id,
+            );
+          path = uploaded.current;
+        }
+        if (!path) throw new Error("Upload a receipt photo first.");
+        const { data, error } = await client().functions.invoke(
+          "scan-receipt",
+          { body: { household_id: st.household!.id, receipt_path: path } },
+        );
+        if (error) {
+          let message =
+            "Receipt scanning is unavailable. Enter the receipt items manually.";
+          try {
+            const body = await error.context?.json();
+            if (body?.error) message = body.error;
+          } catch {}
+          throw new Error(message);
+        }
+        extracted = validateExtraction(data, st.household!.currency);
+      }
+      const details: ReceiptDetails = {
+        items: extracted.items.map((i: { name: string; cents: number }) => ({
+          ...i,
+          members: st.members.filter((m) => !m.left_at).map((m) => m.id),
+        })),
+        taxCents: extracted.taxCents,
+        tipCents: extracted.tipCents,
+        discountCents: extracted.discountCents,
+        cashbackExpectedCents: 0,
+        cashbackReceivedCents: 0,
+        sourceTotalCents: extracted.totalCents,
+      };
+      setReceiptItems(receiptDraft(details));
+      setItemized(true);
+      setReceiptReviewed(false);
+      if (!name.trim())
+        setName(
+          extracted.merchant
+            ? `${extracted.merchant} receipt`
+            : "Itemized receipt",
+        );
+      if (!store.trim()) setStore(extracted.merchant);
+      if (extracted.date) setDate(extracted.date);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+      lock.current = false;
+    }
+  };
   const save = async () => {
     if (lock.current) return;
     lock.current = true;
@@ -1626,12 +1742,18 @@ function PurchaseEditor({
     setError("");
     try {
       const { validateExpense } = await import("./src/core");
+      if (itemized && receiptError) throw new Error(receiptError);
+      if (itemized && !receiptReviewed)
+        throw new Error(
+          "Review the receipt items, assignments and total before saving.",
+        );
       const purchase: Expense = {
         id,
         one_time: oneTime,
         household_id: st.household!.id,
         name: name.trim(),
-        cents: parseMoney(amount),
+        cents,
+        receipt_details: itemized ? receiptDetails : null,
         date,
         paid_by: paidBy,
         category,
@@ -1696,7 +1818,8 @@ function PurchaseEditor({
       <View style={[s.row, { gap: 14, alignItems: "flex-start" }]}>
         <Field
           label={`Total (${st.household?.currency}) *`}
-          value={amount}
+          value={itemized ? (cents / 100).toFixed(2) : amount}
+          editable={!itemized}
           onChangeText={setAmount}
           placeholder="0.00"
           keyboardType="decimal-pad"
@@ -1746,125 +1869,131 @@ function PurchaseEditor({
         </View>
       </View>
       <View style={s.divider} />
-      <View style={s.between}>
-        <Title style={{ fontSize: 22 }}>Split with</Title>
-        <View style={[s.row, { gap: 7 }]}>
-          <Chip
-            label="Equally"
-            active={!custom}
-            onPress={() => setCustom(false)}
-          />
-          <Chip
-            label="Custom"
-            active={custom}
-            onPress={() => {
-              setCustom(true);
-              if (!Object.keys(customAmounts).length)
-                setCustomAmounts(
-                  Object.fromEntries(
-                    shares.map((s) => [
-                      s.member_id,
-                      (s.cents / 100).toFixed(2),
-                    ]),
-                  ),
-                );
-            }}
-          />
-        </View>
-      </View>
-      <View style={{ gap: 12 }}>
-        {available.map((m, i) => (
-          <View key={m.id} style={[s.row, { gap: 11 }]}>
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityLabel={`Split with ${m.name}`}
-              accessibilityState={{ checked: selected.includes(m.id) }}
-              onPress={() =>
-                setSelected(
-                  selected.includes(m.id)
-                    ? selected.filter((x) => x !== m.id)
-                    : [...selected, m.id],
-                )
-              }
-              style={[s.row, { gap: 10, flex: 1, minHeight: 44 }]}
-            >
-              <View
-                style={{
-                  width: 21,
-                  height: 21,
-                  borderRadius: 6,
-                  borderWidth: 1,
-                  borderColor: selected.includes(m.id) ? C.green : C.line,
-                  backgroundColor: selected.includes(m.id) ? C.green : C.white,
-                  alignItems: "center",
-                  justifyContent: "center",
+      {!itemized && (
+        <>
+          <View style={s.between}>
+            <Title style={{ fontSize: 22 }}>Split with</Title>
+            <View style={[s.row, { gap: 7 }]}>
+              <Chip
+                label="Equally"
+                active={!custom}
+                onPress={() => setCustom(false)}
+              />
+              <Chip
+                label="Custom"
+                active={custom}
+                onPress={() => {
+                  setCustom(true);
+                  if (!Object.keys(customAmounts).length)
+                    setCustomAmounts(
+                      Object.fromEntries(
+                        shares.map((s) => [
+                          s.member_id,
+                          (s.cents / 100).toFixed(2),
+                        ]),
+                      ),
+                    );
                 }}
-              >
-                {selected.includes(m.id) && (
-                  <Icon name="Check" size={14} color={C.white} />
-                )}
-              </View>
-              <Avatar name={m.name} index={i} size={30} />
-              <Txt style={{ fontSize: 12, flex: 1 }}>
-                {m.name}
-                {m.left_at ? " · former" : ""}
-              </Txt>
-            </Pressable>
-            {selected.includes(m.id) &&
-              (custom ? (
-                <TextInput
-                  accessibilityLabel={`${m.name} custom share`}
-                  keyboardType="decimal-pad"
-                  value={customAmounts[m.id] || ""}
-                  placeholder="0.00"
-                  onChangeText={(v) =>
-                    setCustomAmounts({ ...customAmounts, [m.id]: v })
-                  }
-                  style={{
-                    borderWidth: 1,
-                    borderColor: C.line,
-                    borderRadius: 7,
-                    padding: 10,
-                    width: 95,
-                    fontFamily: "DM",
-                    color: C.ink,
-                    textAlign: "right",
-                  }}
-                />
-              ) : (
-                <Txt style={{ fontFamily: "DMBold", fontSize: 13 }}>
-                  {money(
-                    shares.find((s) => s.member_id === m.id)?.cents || 0,
-                    st.household?.currency,
-                  )}
-                </Txt>
-              ))}
+              />
+            </View>
           </View>
-        ))}
-      </View>
-      <View
-        style={[
-          s.between,
-          { backgroundColor: C.sage, padding: 13, borderRadius: 9 },
-        ]}
-      >
-        <Txt style={{ fontSize: 12, color: C.green }}>
-          Total split · {selected.length} roommates
-        </Txt>
-        <Txt style={{ fontFamily: "DMBold", color: C.green }}>
-          {money(
-            shares.reduce((n, s) => n + s.cents, 0),
-            st.household?.currency,
+          <View style={{ gap: 12 }}>
+            {available.map((m, i) => (
+              <View key={m.id} style={[s.row, { gap: 11 }]}>
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={`Split with ${m.name}`}
+                  accessibilityState={{ checked: selected.includes(m.id) }}
+                  onPress={() =>
+                    setSelected(
+                      selected.includes(m.id)
+                        ? selected.filter((x) => x !== m.id)
+                        : [...selected, m.id],
+                    )
+                  }
+                  style={[s.row, { gap: 10, flex: 1, minHeight: 44 }]}
+                >
+                  <View
+                    style={{
+                      width: 21,
+                      height: 21,
+                      borderRadius: 6,
+                      borderWidth: 1,
+                      borderColor: selected.includes(m.id) ? C.green : C.line,
+                      backgroundColor: selected.includes(m.id)
+                        ? C.green
+                        : C.white,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {selected.includes(m.id) && (
+                      <Icon name="Check" size={14} color={C.white} />
+                    )}
+                  </View>
+                  <Avatar name={m.name} index={i} size={30} />
+                  <Txt style={{ fontSize: 12, flex: 1 }}>
+                    {m.name}
+                    {m.left_at ? " · former" : ""}
+                  </Txt>
+                </Pressable>
+                {selected.includes(m.id) &&
+                  (custom ? (
+                    <TextInput
+                      accessibilityLabel={`${m.name} custom share`}
+                      keyboardType="decimal-pad"
+                      value={customAmounts[m.id] || ""}
+                      placeholder="0.00"
+                      onChangeText={(v) =>
+                        setCustomAmounts({ ...customAmounts, [m.id]: v })
+                      }
+                      style={{
+                        borderWidth: 1,
+                        borderColor: C.line,
+                        borderRadius: 7,
+                        padding: 10,
+                        width: 95,
+                        fontFamily: "DM",
+                        color: C.ink,
+                        textAlign: "right",
+                      }}
+                    />
+                  ) : (
+                    <Txt style={{ fontFamily: "DMBold", fontSize: 13 }}>
+                      {money(
+                        shares.find((s) => s.member_id === m.id)?.cents || 0,
+                        st.household?.currency,
+                      )}
+                    </Txt>
+                  ))}
+              </View>
+            ))}
+          </View>
+          <View
+            style={[
+              s.between,
+              { backgroundColor: C.sage, padding: 13, borderRadius: 9 },
+            ]}
+          >
+            <Txt style={{ fontSize: 12, color: C.green }}>
+              Total split · {selected.length} roommates
+            </Txt>
+            <Txt style={{ fontFamily: "DMBold", color: C.green }}>
+              {money(
+                shares.reduce((n, s) => n + s.cents, 0),
+                st.household?.currency,
+              )}
+            </Txt>
+          </View>
+          {!custom && (
+            <Txt style={{ fontSize: 10, color: C.muted, marginTop: -12 }}>
+              Any spare cents are distributed consistently so the shares always
+              match.
+            </Txt>
           )}
-        </Txt>
-      </View>
-      {!custom && (
-        <Txt style={{ fontSize: 10, color: C.muted, marginTop: -12 }}>
-          Any spare cents are distributed consistently so the shares always
-          match.
-        </Txt>
+          <View style={s.divider} />
+        </>
       )}
-      <View style={s.divider} />
       <View style={{ gap: 12 }}>
         <Title style={{ fontSize: 22 }}>
           Receipt <Txt style={s.muted}>(optional)</Txt>
@@ -1923,6 +2052,49 @@ function PurchaseEditor({
         <Txt style={{ fontSize: 10, color: C.muted }}>
           JPEG, PNG or WebP · up to 5 MB · private to your household
         </Txt>
+        {receipt && (
+          <Button
+            secondary
+            label={st.demo ? "Load sample receipt items" : "Scan receipt items"}
+            disabled={busy}
+            onPress={() => void scanReceipt()}
+          />
+        )}
+        <Txt style={s.muted}>
+          {st.demo
+            ? "The sample scan loads the sample receipt’s items; it does not read uploaded images. You can enter any receipt’s items manually below."
+            : "Optional scanning sends this private receipt image to the configured AI receipt service. Review every extracted item and total before saving. Manual entry works without a scanning service."}
+        </Txt>
+        <Button
+          secondary
+          label={
+            itemized
+              ? "Use a simple total instead"
+              : "Itemize receipt and track cashback"
+          }
+          disabled={busy}
+          onPress={() => {
+            if (itemized && receiptCalculation)
+              setAmount((receiptCalculation.total / 100).toFixed(2));
+            setItemized(!itemized);
+            setReceiptReviewed(false);
+          }}
+        />
+        {itemized && (
+          <ReceiptItemEditor
+            payerId={paidBy}
+            draft={receiptItems}
+            onChange={(draft) => {
+              setReceiptItems(draft);
+              setReceiptReviewed(false);
+            }}
+            members={available}
+            currency={st.household!.currency}
+            reviewed={receiptReviewed}
+            onReviewed={setReceiptReviewed}
+            busy={busy}
+          />
+        )}
       </View>
       <Pressable
         accessibilityRole="checkbox"
@@ -2059,6 +2231,43 @@ function PurchaseDetail({
           </Txt>
         </View>
       ))}
+      {e.receipt_details && (
+        <View style={{ gap: 9 }}>
+          <Title style={{ fontSize: 23 }}>Receipt expense list</Title>
+          {e.receipt_details.items.map((item, index) => (
+            <View key={index} style={{ gap: 3 }}>
+              <Txt style={{ fontFamily: "DMBold" }}>
+                {item.name} · {money(item.cents, st.household?.currency)}
+              </Txt>
+              <Txt style={s.muted}>
+                Shared by {item.members.map(name).join(", ")}
+              </Txt>
+            </View>
+          ))}
+          <Txt>
+            Tax {money(e.receipt_details.taxCents, st.household?.currency)} ·
+            Tip {money(e.receipt_details.tipCents, st.household?.currency)} ·
+            Discount{" "}
+            {money(e.receipt_details.discountCents, st.household?.currency)}
+          </Txt>
+          <Txt>
+            External cashback expected:{" "}
+            {money(
+              e.receipt_details.cashbackExpectedCents,
+              st.household?.currency,
+            )}{" "}
+            · Reported received:{" "}
+            {money(
+              e.receipt_details.cashbackReceivedCents,
+              st.household?.currency,
+            )}
+          </Txt>
+          <Txt style={s.muted}>
+            Cashback is self-reported and does not reduce these shares.
+            SplitCart does not issue or redeem rewards.
+          </Txt>
+        </View>
+      )}
       {e.receipt && (
         <>
           <Title style={{ fontSize: 23 }}>The receipt</Title>

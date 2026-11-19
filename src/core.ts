@@ -1,3 +1,5 @@
+import { calculateReceipt } from "./receiptItems";
+import type { ReceiptDetails } from "./receiptItems";
 export type Member = {
   id: string;
   user_id: string;
@@ -6,6 +8,7 @@ export type Member = {
 };
 export type Share = { member_id: string; cents: number };
 export type Expense = {
+  receipt_details?: ReceiptDetails | null;
   one_time?: boolean;
   id: string;
   household_id: string;
@@ -146,6 +149,24 @@ export const validDate = (value: string) =>
   Number.isFinite(new Date(value).getTime()) &&
   new Date(value).toISOString().slice(0, 10) === value;
 export function validateExpense(e: Expense, members: Member[]) {
+  if (e.receipt_details) {
+    const calculated = calculateReceipt(
+      e.receipt_details,
+      members.map((m) => m.id),
+    );
+    const canonical = (shares: Share[]) =>
+      JSON.stringify(
+        [...shares].sort((a, b) => a.member_id.localeCompare(b.member_id)),
+      );
+    if (
+      e.cents !== calculated.total ||
+      canonical(e.shares) !== canonical(calculated.shares)
+    )
+      throw new Error(
+        "Receipt item totals and roommate shares must match the purchase.",
+      );
+  }
+
   if (e.one_time !== undefined && typeof e.one_time !== "boolean")
     throw new Error("Choose whether this was a one-time purchase.");
   if (!e.name.trim() || e.name.trim().length > 120)

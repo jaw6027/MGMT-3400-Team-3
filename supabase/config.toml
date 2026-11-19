@@ -28,3 +28,7 @@ file_size_limit = "5MiB"
 # separately. The gateway must permit provider webhooks without a Supabase JWT.
 [functions.payments]
 verify_jwt = false
+
+# Handler verifies JWT and household membership before loading private images.
+[functions.scan-receipt]
+verify_jwt = false

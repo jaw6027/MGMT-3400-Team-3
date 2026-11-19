@@ -1174,3 +1174,131 @@ test("browser preview exposes safe payment scenarios and clears only example rec
     page.getByText("Bank accounts need attention", { exact: true }),
   ).toHaveCount(0);
 });
+
+test("uploaded itemized receipts automatically calculate assigned shares and keep external cashback separate", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await button("Add a purchase").click();
+  await page
+    .getByLabel("What did you buy? *", { exact: true })
+    .fill("Itemized grocery receipt");
+  const chooserPromise = page.waitForEvent("filechooser");
+  await button("Choose photo").click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    name: "receipt.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await button("Itemize receipt and track cashback").click();
+  await page
+    .getByLabel("Receipt item 1 name", { exact: true })
+    .fill("Shared milk");
+  await page
+    .getByLabel("Receipt item 1 line total (USD)", { exact: true })
+    .fill("10");
+  await button("Sam Rivera · item 1").click();
+  await button("Riley Chen · item 1").click();
+  await button("Add receipt item").click();
+  await page
+    .getByLabel("Receipt item 2 name", { exact: true })
+    .fill("Jordan’s groceries");
+  await page
+    .getByLabel("Receipt item 2 line total (USD)", { exact: true })
+    .fill("20");
+  for (const name of ["Alex Morgan", "Sam Rivera", "Riley Chen"])
+    await button(`${name} · item 2`).click();
+  await page.getByLabel("Receipt tax (USD)", { exact: true }).fill("3");
+  await page
+    .getByLabel("Printed receipt total (optional) (USD)", { exact: true })
+    .fill("33");
+  await page
+    .getByLabel("Expected cashback elsewhere (USD)", { exact: true })
+    .fill("1");
+  await page
+    .getByLabel("Cashback received elsewhere (USD)", { exact: true })
+    .fill("0.50");
+  await expect(
+    page.getByText("Calculated receipt total: $33.00", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Alex Morgan: $5.50", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Jordan Lee: $27.50", { exact: true }),
+  ).toBeVisible();
+  await button("Save purchase").click();
+  await expect(
+    page.getByText(
+      "Review the receipt items, assignments and total before saving.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await page
+    .getByRole("switch", {
+      name: "I reviewed the receipt items, assignments and total",
+      exact: true,
+    })
+    .click();
+  await button("Save purchase").click();
+  await button("View Itemized grocery receipt").click();
+  await expect(
+    page.getByText("Shared milk · $10.00", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "External cashback expected: $1.00 · Reported received: $0.50",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const record = await page.evaluate(() => {
+    const db = JSON.parse(
+      localStorage.getItem("splitcart-browser-preview-v1")!,
+    );
+    return db.expenses.find((e: any) => e.name === "Itemized grocery receipt");
+  });
+  expect(record.cents).toBe(3300);
+  expect(record.shares.reduce((n: number, s: any) => n + s.cents, 0)).toBe(
+    3300,
+  );
+  expect(record.receipt_details.cashbackReceivedCents).toBe(50);
+  expect(record.receipt).toBeTruthy();
+});
+
+test("sample receipt extraction is reviewable, matches the printed total, and never pretends to read custom images", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await button("Add a purchase").click();
+  await page.getByText("Try a sample receipt", { exact: true }).click();
+  await button("Load sample receipt items").click();
+  await expect(
+    page.getByText("Calculated receipt total: $85.50", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/it does not read uploaded images/),
+  ).toBeVisible();
+  await page
+    .getByLabel("Receipt item 1 line total (USD)", { exact: true })
+    .fill("25");
+  await expect(
+    page.getByText(/do not match the printed receipt total/),
+  ).toBeVisible();
+  await page
+    .getByLabel("Receipt item 1 line total (USD)", { exact: true })
+    .fill("24.50");
+  await page
+    .getByRole("switch", {
+      name: "I reviewed the receipt items, assignments and total",
+      exact: true,
+    })
+    .click();
+  await button("Save purchase").click();
+  await expect(button("View Green Market receipt")).toBeVisible();
+});

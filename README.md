@@ -11,7 +11,7 @@ This is a self-contained export of the actual Expo web app, including:
 - Separate local preview logins and signup; creating/naming a household, copying codes, joining with another account, renaming, profiles, leaving and rejoining.
 - Shopping plans from 61 spreadsheet items, custom expenses, purchaser assignments, last-buyer memory, and one-time flags.
 - **Chore Tracker** with 19 spreadsheet chores, custom chores, recurring schedules, fixed or rotating members, and dated completion history.
-- Purchases, camera/library receipt attachment, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
+- Purchases, camera/library receipt attachment, reviewable item lists, automatic item-level shares, external cashback tracking, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
 - Balances, settlement suggestions, manual repayment history, and sample bank/card payments with surcharge previews.
 - Named recurring rent, internet, utility and subscription bills, bank-autopay consent, pause/edit/cancel, reminders and simulated phone verification (code **123456**).
 - Seven card-network samples, the credit-only 2.5% fee, two-step security, bank verification, receiver-confirmed cash, searchable history and downloadable receipts.
@@ -263,3 +263,13 @@ New simulated screen previews: [duplicate protection](docs/previews/duplicate-pa
 Deploy migration `202611190004_partial_recurring_categories.sql` before the updated payment function/app. Scheduled monthly occurrences remain full-amount payments; installment tracking is available on payment requests. See [details and deployment notes](docs/payments.md#partial-requests-named-recurring-bills-and-spending-categories).
 
 Previews: [partial payment](docs/previews/partial-payments.png), [recurring bills](docs/previews/recurring-bills.png), [spending breakdown](docs/previews/spending-breakdown.png).
+
+## Receipt items and cashback tracking
+
+In **Add a purchase → Receipt**, upload a photo and choose **Itemize receipt and track cashback**. Enter line totals and assign each item to the people sharing it. SplitCart calculates the full total and each person's share, including proportional tax, tip and discount, with cent-perfect reconciliation. Review the items before saving. Details retain the item list and assignments alongside the photo.
+
+An optional server-side **Scan receipt items** integration can extract receipt facts for review. Configure and deploy `scan-receipt` with a server-only `OPENAI_API_KEY` to enable it; manual entry always works. The browser preview offers **Load sample receipt items** using the known sample image, rather than pretending to scan uploaded images. Apply migration `202611190005_itemized_receipts.sql` before deployment. See [configuration, limits and privacy](docs/payments.md#itemized-receipts-and-external-cashback-tracking).
+
+Cashback fields track **external card or retailer rewards** that you expect or report as received. They do not change roommate debts or spending. SplitCart does not fund, verify, issue, pay out or redeem cashback. A separate summary appears under the category breakdown when rewards have been recorded.
+
+Receipt previews: [calculated roommate amounts](docs/previews/receipt-item-split.png), [itemized receipt with photo](docs/previews/itemized-receipt-details.png), and [external cashback tracker](docs/previews/cashback-tracker.png).
