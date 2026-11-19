@@ -128,9 +128,32 @@ export function PaymentRequests({
                 ? "Canceled"
                 : r.status === "succeeded"
                   ? "Paid"
-                  : !r.status || r.status === "open"
-                    ? "Unpaid"
-                    : paymentStatus(r.status).label}
+                  : r.status === "partial"
+                    ? "Partially paid"
+                    : r.status === "review_required"
+                      ? "Needs support review"
+                      : !r.status || r.status === "open"
+                        ? "Unpaid"
+                        : paymentStatus(r.status).label}
+            </Txt>
+            <Txt>
+              Paid{" "}
+              {money(
+                r.paidCents ?? (r.status === "succeeded" ? r.cents : 0),
+                "USD",
+              )}{" "}
+              · Remaining{" "}
+              {money(
+                r.remainingCents ?? (r.status === "succeeded" ? 0 : r.cents),
+                "USD",
+              )}
+              {r.reservedCents
+                ? ` · Processing ${money(r.reservedCents, "USD")}`
+                : ""}
+            </Txt>
+            <Txt style={s.muted}>
+              Partial payments reduce the balance only after confirmation.
+              Credit card fees are separate from the amount owed.
             </Txt>
             {!!r.note && <Txt>{r.note}</Txt>}
             {!!r.expenseId && (
@@ -141,7 +164,7 @@ export function PaymentRequests({
               </Txt>
             )}
             {!r.canceled &&
-              (!r.status || r.status === "open") &&
+              (!r.status || ["open", "partial"].includes(r.status)) &&
               (r.payer === self.id ? (
                 <Button
                   secondary
@@ -149,7 +172,7 @@ export function PaymentRequests({
                   disabled={busy}
                   onPress={() => onPay(r)}
                 />
-              ) : (
+              ) : r.status === "partial" ? null : (
                 <Button
                   secondary
                   label={`Cancel request to ${name(r.payer)}`}

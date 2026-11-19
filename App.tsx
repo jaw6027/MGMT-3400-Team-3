@@ -1,3 +1,4 @@
+import { SpendingBreakdown } from "./src/SpendingBreakdown";
 import ChoreTracker from "./src/ChoreTracker";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -760,6 +761,7 @@ function Main() {
                       </View>
                     ))}
                   </View>
+                  <SpendingBreakdown />
                   <View
                     style={{
                       flexDirection: desktop ? "row" : "column",

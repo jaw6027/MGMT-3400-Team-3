@@ -8,11 +8,13 @@ export function matchingPayment(
     status: string;
     created_at: string;
     completed_at?: string | null;
+    requestId?: string;
   }[],
   recipient: string,
   cents: number,
   now = Date.now(),
   excludeId?: string,
+  requestId?: string,
 ) {
   return rows.find(
     (p) =>
@@ -21,6 +23,7 @@ export function matchingPayment(
       p.cents === cents &&
       (["created", "processing", "requires_action"].includes(p.status) ||
         (p.status === "succeeded" &&
+          !(requestId && p.requestId === requestId) &&
           Date.parse(p.completed_at || p.created_at) > now - 600000)),
   );
 }

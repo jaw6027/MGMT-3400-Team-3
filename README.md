@@ -247,3 +247,13 @@ SplitCart now blocks matching pending bank/card/cash payments and protects recen
 Apply `202611190001_payment_safety.sql` before deploying the updated app and payment function. Arrival windows are planning estimates, not confirmed payouts; live bank/Stripe configuration and staging verification are still required. See [payment safety and bank health](docs/payments.md#duplicate-protection-arrival-estimates-and-bank-health).
 
 New simulated screen previews: [duplicate protection](docs/previews/duplicate-payment-protection.png), [processing and estimated arrival](docs/previews/payment-processing-arrival.png), [bank issue alert](docs/previews/linked-bank-alert.png), and [failure explanation](docs/previews/payment-failure-reason.png).
+
+## Installments, recurring bills, and spending breakdown
+
+- **Payment requests:** pay part now and the rest later, with paid/processing/remaining balances shared between roommates. Confirmed principal counts toward the request; credit fees stay separate. Server reservations prevent overpayment and concurrent duplicate attempts.
+- **Recurring bills:** name monthly rent, internet, utilities, subscriptions, and other dues in Autopay. Choose a manual due or authorize bank autopay, then view the named schedule in Upcoming. These schedules pay eligible household recipients; external biller integrations are not included.
+- **Spending by category:** Overview shows amounts, percentages and purchase counts for this month, last month or all time. New purchase categories include Rent, Internet, Subscriptions and Dining. Reports exclude repayments, fees, planned shopping and future schedules.
+
+Deploy migration `202611190004_partial_recurring_categories.sql` before the updated payment function/app. Scheduled monthly occurrences remain full-amount payments; installment tracking is available on payment requests. See [details and deployment notes](docs/payments.md#partial-requests-named-recurring-bills-and-spending-categories).
+
+Previews: [partial payment](docs/previews/partial-payments.png), [recurring bills](docs/previews/recurring-bills.png), [spending breakdown](docs/previews/spending-breakdown.png).

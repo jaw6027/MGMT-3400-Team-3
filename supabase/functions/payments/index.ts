@@ -1,4 +1,8 @@
 import {
+  requestBalance,
+  RECURRING_CATEGORIES,
+} from "../_shared/installments.ts";
+import {
   DUPLICATE_MESSAGE,
   failureExplanation,
   safeFailureCode,
@@ -40,6 +44,10 @@ function check(yes: unknown, message: string): asserts yes {
 }
 function result<T>({ data, error }: { data: T; error: any }): T {
   if (error?.code === "SC001") throw new Error(DUPLICATE_MESSAGE);
+  if (error?.code === "SC002")
+    throw new Error(
+      "Refresh this request and check Activity. A payment may be processing, or the amount exceeds the remaining balance. Leave zero or at least $0.50 outstanding.",
+    );
   if (error) throw new Error("Payment data could not be saved. Please retry.");
   return data;
 }
@@ -898,7 +906,7 @@ async function status(user: any) {
     ? result(
         await db
           .from("payment_requests")
-          .select("*,payment_orders(status)")
+          .select("*,payment_orders(status,cents)")
           .eq("household_id", self.household_id)
           .or(`requester_id.eq.${self.id},payer_id.eq.${self.id}`)
           .order("created_at", { ascending: false })
@@ -944,11 +952,8 @@ async function status(user: any) {
       expenseId: r.expense_id,
       canceled: r.canceled,
       created_at: r.created_at,
-      status: r.canceled
-        ? "canceled"
-        : r.payment_orders?.find(
-            (p: any) => !["failed", "canceled"].includes(p.status),
-          )?.status || "open",
+      ...requestBalance(r.cents, r.payment_orders || []),
+      ...(r.canceled ? { status: "canceled" } : {}),
     })),
     notifications,
     phoneVerified: a.phone_verified,
@@ -969,6 +974,8 @@ async function status(user: any) {
       id: d.id,
       recipient: d.recipient_id || "app",
       cents: d.cents,
+      label: d.label,
+      category: d.category,
       day: d.due_day,
       automatic: d.automatic,
       method: d.payment_method,
@@ -1141,11 +1148,12 @@ async function paymentUpdate(order: any) {
   }
 }
 async function remind(d: any, date: string, a: any, user: any, kind = "due") {
+  const bill = d.label && d.label !== "Monthly due" ? `${d.label}: ` : "";
   const text =
     kind === "autopay"
-      ? `SplitCart: autopay will charge $${(d.cents / 100).toFixed(2)} to ${d.method_label || "your selected bank"} on ${date} (UTC). No surcharge. Open Autopay to review or pause future payments.`
+      ? `SplitCart: ${bill}autopay will charge $${(d.cents / 100).toFixed(2)} to ${d.method_label || "your selected bank"} on ${date} (UTC). No surcharge. Open Autopay to review or pause future payments.`
       : kind === "failure"
-        ? `SplitCart: automatic payment of $${(d.cents / 100).toFixed(2)} for ${date} needs attention. Check payment activity and your bank before paying again.`
+        ? `SplitCart: ${bill}automatic payment of $${(d.cents / 100).toFixed(2)} for ${date} needs attention. Check payment activity and your bank before paying again.`
         : `SplitCart: your $${(d.cents / 100).toFixed(2)} due is on ${date} (UTC). ${d.automatic ? "Autopay is enabled; check payment status in the app." : "Open SplitCart to review and pay."}`;
   for (const channel of ["email", "sms"]) {
     if (
@@ -1840,6 +1848,15 @@ export async function handler(req: Request) {
         self = await member(user.id);
       check(d && typeof d.automatic === "boolean", "Invalid monthly due.");
       dueDate("2026-01", d.day);
+      check(
+        (d.label === undefined ||
+          (typeof d.label === "string" &&
+            d.label.trim().length > 0 &&
+            d.label.trim().length <= 120)) &&
+          (d.category === undefined ||
+            RECURRING_CATEGORIES.includes(d.category)),
+        "Add a bill name and valid recurring category.",
+      );
       if (d.automatic) check(enabled(), "Live payments are not activated yet.");
       const m = d.automatic ? await method(a.customer_id, d.method) : null;
       const to = await recipient(self, d.recipient, d.automatic);
@@ -1870,6 +1887,8 @@ export async function handler(req: Request) {
         );
       }
       const schedule = {
+        label: d.label?.trim() || "Monthly due",
+        category: d.category || "Other",
         user_id: user.id,
         household_id: self.household_id,
         recipient_id: to?.member.id || null,

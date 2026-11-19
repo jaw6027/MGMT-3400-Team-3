@@ -14,6 +14,8 @@ export type PaymentMethod = {
   verification?: "verified" | "pending";
 };
 export type Due = {
+  label?: string;
+  category?: string;
   id: string;
   recipient: string;
   cents: number;
@@ -49,6 +51,10 @@ export type Reminder = {
   paymentUpdates?: boolean;
 };
 export type PaymentRequest = {
+  paidCents?: number;
+  reservedCents?: number;
+  remainingCents?: number;
+  reviewRequired?: boolean;
   id: string;
   requester: string;
   payer: string;

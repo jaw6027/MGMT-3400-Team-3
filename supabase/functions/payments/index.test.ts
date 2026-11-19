@@ -36,6 +36,7 @@ let orders: any[] = [],
   bankAttempts: any[] = [];
 let cardBrand = "visa",
   showCatalogCards = false;
+let requestRows: any[] = [];
 let bankReady = true;
 let exposeBank = false,
   bankBlocked = false,
@@ -77,6 +78,7 @@ function assert(value: unknown, message = "Assertion failed"): asserts value {
 }
 function reset() {
   orders = [];
+  requestRows = [];
   duplicateReservation = false;
   exposeBank = false;
   bankBlocked = false;
@@ -418,7 +420,22 @@ globalThis.fetch = async (
     }
     return json(null);
   }
-  if (table === "payment_requests") return rows([]);
+  if (table === "payment_requests")
+    return rows(
+      requestRows.map((r) => ({
+        ...r,
+        payment_orders: orders.filter((o) => o.request_id === r.id),
+      })),
+    );
+  if (table === "reserve_request_payment") {
+    const row = {
+      ...body.order_data,
+      status: "created",
+      created_at: new Date().toISOString(),
+    };
+    orders.push(row);
+    return json(row);
+  }
   if (table === "reserve_due_payment") {
     const value = body.order_data;
     let row = orders.find(
@@ -1477,5 +1494,96 @@ Deno.test(
     assert(response.status === 200);
     assert(Number(sends) === 2);
     assert(notices.some((n) => n.message.includes("cannot make payments")));
+  },
+);
+
+Deno.test(
+  "request status totals confirmed installments and forwards the chosen partial principal",
+  async () => {
+    reset();
+    const rid = "60000000-0000-4000-8000-000000000001";
+    requestRows = [
+      {
+        id: rid,
+        cents: 10000,
+        requester_id: "roommate",
+        payer_id: "self",
+        note: "Rent",
+        canceled: false,
+      },
+    ];
+    orders = [
+      {
+        id: "prior",
+        stripe_intent: "pi_fixture",
+        user_id: userId,
+        request_id: rid,
+        cents: 3000,
+        fee: 75,
+        status: "succeeded",
+        recipient_id: "roommate",
+        created_at: new Date().toISOString(),
+      },
+    ];
+    const stateResponse = await request({ action: "status" });
+    assert(stateResponse.status === 200, await stateResponse.clone().text());
+    const state = await stateResponse.json();
+    assert(
+      state.requests[0].paidCents === 3000 &&
+        state.requests[0].remainingCents === 7000 &&
+        state.requests[0].status === "partial",
+    );
+    // Keep the mock provider's lookup of the newly created intent unambiguous.
+    orders = [];
+    const response = await request({
+      ...payment(),
+      requestId: rid,
+      cents: 2000,
+      total: 2050,
+    });
+    assert(response.status === 200, await response.clone().text());
+    const saved = await response.json();
+    assert(
+      saved.cents === 2000 && saved.fee === 50 && saved.request_id === rid,
+    );
+    const reserve = requests.find((r) =>
+      r.url.pathname.endsWith("/reserve_request_payment"),
+    )!;
+    assert(reserve.body.order_data.cents === 2000);
+  },
+);
+Deno.test(
+  "named recurring schedules retain their category through the API",
+  async () => {
+    reset();
+    const response = await request({
+      action: "save_due",
+      due: {
+        recipient: "roommate",
+        cents: 80000,
+        day: 1,
+        automatic: false,
+        consent: false,
+        label: "Apartment rent",
+        category: "Rent",
+      },
+    });
+    assert(response.status === 200, await response.clone().text());
+    assert(
+      automaticDues[0].label === "Apartment rent" &&
+        automaticDues[0].category === "Rent",
+    );
+    const invalid = await request({
+      action: "save_due",
+      due: {
+        recipient: "roommate",
+        cents: 80000,
+        day: 1,
+        automatic: false,
+        label: "",
+        category: "Unknown",
+      },
+    });
+    assert(invalid.status === 400);
   },
 );

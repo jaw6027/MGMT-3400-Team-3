@@ -51,6 +51,7 @@ export function PaymentDashboard({
           }}
         >
           <Txt style={{ fontFamily: "DMBold", fontSize: 20 }}>
+            {due.label && due.label !== "Monthly due" ? `${due.label} · ` : ""}
             {money(due.cents, "USD")} to {name(due.recipient)}
           </Txt>
           <Txt>

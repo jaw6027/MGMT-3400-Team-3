@@ -104,6 +104,10 @@ export type Data = {
   repayments: Repayment[];
 };
 export const categories = [
+  "Rent",
+  "Internet",
+  "Subscriptions",
+  "Dining",
   "Groceries",
   "Household",
   "Utilities",

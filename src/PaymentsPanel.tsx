@@ -1,4 +1,8 @@
 import {
+  validateInstallment,
+  RECURRING_CATEGORIES,
+} from "../supabase/functions/_shared/installments";
+import {
   DUPLICATE_MESSAGE,
   matchingPayment,
 } from "../supabase/functions/_shared/payment-safety";
@@ -105,6 +109,8 @@ export default function PaymentsPanel() {
     dueDate?: string;
     requestId?: string;
   } | null>(null);
+  const [billLabel, setBillLabel] = useState("Monthly due"),
+    [billCategory, setBillCategory] = useState("Other");
   const [day, setDay] = useState("1"),
     [automatic, setAutomatic] = useState(false),
     [authorize, setAuthorize] = useState(false);
@@ -316,7 +322,14 @@ export default function PaymentsPanel() {
     if (!to) throw new Error("Choose who to pay.");
     const cents = to === "app" ? state.appDues : parseMoney(amount);
     if (
-      matchingPayment(state.payments, to, cents) ||
+      matchingPayment(
+        state.payments,
+        to,
+        cents,
+        Date.now(),
+        undefined,
+        requestContext?.id,
+      ) ||
       (st.cashPayments || []).some(
         (p: any) =>
           p.from_id === self?.id &&
@@ -328,6 +341,11 @@ export default function PaymentsPanel() {
       )
     )
       throw new Error(DUPLICATE_MESSAGE);
+    if (requestContext)
+      validateInstallment(
+        cents,
+        requestContext.remainingCents ?? requestContext.cents,
+      );
     setReview({
       id: uid(),
       method: selected,
@@ -353,6 +371,7 @@ export default function PaymentsPanel() {
           review.cents,
           Date.now(),
           review.id,
+          review.requestId,
         )
       )
         throw new Error(DUPLICATE_MESSAGE);
@@ -382,11 +401,20 @@ export default function PaymentsPanel() {
         if (
           !request ||
           request.canceled ||
-          (request.status && request.status !== "open")
+          (request.status && !["open", "partial"].includes(request.status))
         )
           throw new Error(
             "This request is no longer available to pay. Refresh its status.",
           );
+      }
+      if (review.requestId) {
+        const request = (await demoRequests(st.household!.id)).find(
+          (r) => r.id === review.requestId,
+        )!;
+        validateInstallment(
+          review.cents,
+          request.remainingCents ?? request.cents,
+        );
       }
       // Same request id is used for both records; retrying never doubles the ledger.
       if (review.recipient !== "app")
@@ -428,7 +456,14 @@ export default function PaymentsPanel() {
           request = requests.find((r) => r.id === review.requestId)!;
         await saveDemoRequest(st.household!.id, {
           ...request,
-          status: "succeeded",
+          paidCents: (request.paidCents || 0) + review.cents,
+          remainingCents:
+            request.cents - (request.paidCents || 0) - review.cents,
+          reservedCents: 0,
+          status:
+            (request.paidCents || 0) + review.cents >= request.cents
+              ? "succeeded"
+              : "partial",
         });
         await load();
       }
@@ -466,6 +501,8 @@ export default function PaymentsPanel() {
       throw new Error(
         "Choose a bank account and authorize automatic payments.",
       );
+    if (!billLabel.trim() || billLabel.trim().length > 120)
+      throw new Error("Add a bill name up to 120 characters.");
     const due: Due = {
       id: editingDue?.id || uid(),
       created_at: editingDue?.created_at || new Date().toISOString(),
@@ -473,6 +510,8 @@ export default function PaymentsPanel() {
       recipient: to,
       cents,
       day: Number(day),
+      label: billLabel.trim(),
+      category: billCategory,
       automatic,
       method: automatic ? selected : "",
       consent: authorize,
@@ -711,7 +750,7 @@ export default function PaymentsPanel() {
                     setRequestContext(r);
                     setDueContext(null);
                     setTo(r.requester);
-                    setAmount((r.cents / 100).toFixed(2));
+                    setAmount(((r.remainingCents ?? r.cents) / 100).toFixed(2));
                     setReview(null);
                     setSection("Pay");
                   }}
@@ -1185,7 +1224,9 @@ export default function PaymentsPanel() {
                       </Txt>
                       <Txt>
                         To {recipientName(to)} ·{" "}
-                        {fmt(to === "app" ? state.appDues : parseMoney(amount))}
+                        {fmt(
+                          to === "app" ? state.appDues : estimate?.cents || 0,
+                        )}
                       </Txt>
                       <Button
                         secondary
@@ -1198,6 +1239,16 @@ export default function PaymentsPanel() {
                         }}
                       />
                     </View>
+                  )}
+                  {requestContext && (
+                    <Txt style={{ fontFamily: "DMBold" }}>
+                      Request total {fmt(requestContext.cents)} · Paid{" "}
+                      {fmt(requestContext.paidCents || 0)} · Remaining{" "}
+                      {fmt(
+                        requestContext.remainingCents ?? requestContext.cents,
+                      )}
+                      . Enter a partial amount or pay the full remainder.
+                    </Txt>
                   )}
                   <Txt style={s.label}>PAY TO</Txt>
                   {dueContext ||
@@ -1232,7 +1283,7 @@ export default function PaymentsPanel() {
                   ) : (
                     <Field
                       label="Payment amount (USD)"
-                      editable={!dueContext && !requestContext}
+                      editable={!dueContext}
                       value={amount}
                       onChangeText={(v: string) => {
                         setAmount(v);
@@ -1345,6 +1396,41 @@ export default function PaymentsPanel() {
                     a linked bank account with no surcharge; it does not
                     automatically pay a changing household balance.
                   </Txt>
+                  <Txt style={s.label}>RECURRING BILL TYPE</Txt>
+                  <View
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}
+                  >
+                    {RECURRING_CATEGORIES.map((category) => (
+                      <Chip
+                        key={category}
+                        label={category}
+                        active={billCategory === category}
+                        onPress={() => {
+                          setBillCategory(category);
+                          setBillLabel(
+                            category === "Other" ? "Monthly due" : category,
+                          );
+                          setAuthorize(false);
+                        }}
+                      />
+                    ))}
+                  </View>
+                  <Field
+                    label="Recurring bill name"
+                    value={billLabel}
+                    maxLength={120}
+                    onChangeText={(value: string) => {
+                      setBillLabel(value);
+                      setAuthorize(false);
+                    }}
+                  />
+                  <Txt style={s.muted}>
+                    Repeats monthly until paused or canceled. Record a purchase
+                    separately once the household expense is paid; schedules do
+                    not count as spending. Manual payments and bank autopay use
+                    the full scheduled amount; payment requests can be paid in
+                    installments.
+                  </Txt>
                   <Field
                     label="Monthly due day (1–28, UTC)"
                     value={day}
@@ -1417,6 +1503,9 @@ export default function PaymentsPanel() {
                       }}
                     >
                       <Txt style={{ fontFamily: "DMBold" }}>
+                        {d.label || "Monthly due"} · {d.category || "Other"}
+                      </Txt>
+                      <Txt style={{ fontFamily: "DMBold" }}>
                         {fmt(d.cents)} to {recipientName(d.recipient)}
                       </Txt>
                       <Txt>
@@ -1438,6 +1527,8 @@ export default function PaymentsPanel() {
                         disabled={busy}
                         onPress={() => {
                           setEditingDue(d);
+                          setBillLabel(d.label || "Monthly due");
+                          setBillCategory(d.category || "Other");
                           setTo(d.recipient);
                           setAmount((d.cents / 100).toFixed(2));
                           setDay(String(d.day));

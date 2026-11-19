@@ -1021,3 +1021,122 @@ test("processing payments show a dated bank-arrival estimate and failures explai
   await button("Review payment").click();
   await expect(page.getByText(/Possible duplicate payment/)).toBeVisible();
 });
+
+test("payment requests can be settled in equal installments with the remaining balance visible to both roommates", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Requests").click();
+  await page.getByLabel("Requested amount (USD)").fill("100");
+  await page
+    .getByLabel("Request note (optional)")
+    .fill("Shared rent installment test");
+  await button("Send payment request").click();
+  await expect(
+    page.getByText("$100.00 · Requested from Jordan Lee", { exact: true }),
+  ).toBeVisible();
+  await signout(page);
+  await page
+    .getByLabel("Email address", { exact: true })
+    .fill("jordan@splitcart.demo");
+  await page.getByLabel("Password", { exact: true }).fill("splitcart-demo");
+  await button("Log in").click();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await verifySampleSecurity(page);
+  await button("Add sample credit card").click();
+  await button("Requests").click();
+  for (const installment of [1, 2]) {
+    await button("Pay request from Alex Morgan").click();
+    await page.getByLabel("Payment amount (USD)", { exact: true }).fill("50");
+    await button("Review payment").click();
+    await expect(
+      page.getByText("Total charged: $51.25", { exact: true }),
+    ).toBeVisible();
+    await button("Confirm demo payment").click();
+    await expect(
+      page.getByText("Demo payment simulated. No money moved.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await button("Requests").click();
+    await expect(
+      page.getByText(
+        installment === 1
+          ? "Paid $50.00 · Remaining $50.00"
+          : "Paid $100.00 · Remaining $0.00",
+        { exact: true },
+      ),
+    ).toBeVisible();
+  }
+  await expect(button("Pay request from Alex Morgan")).toHaveCount(0);
+  await signout(page);
+  await button("Open sample household").click();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Requests").click();
+  await expect(
+    page.getByText("Paid $100.00 · Remaining $0.00", { exact: true }),
+  ).toBeVisible();
+});
+
+test("named recurring rent and internet bills appear in upcoming payments without becoming recorded spending", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Autopay").click();
+  await button("Rent").click();
+  await page
+    .getByLabel("Recurring bill name", { exact: true })
+    .fill("Apartment rent");
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("850");
+  await page
+    .getByLabel("Monthly due day (1–28, UTC)", { exact: true })
+    .fill("1");
+  await button("Save monthly due").click();
+  await expect(
+    page.getByText("Apartment rent · Rent", { exact: true }),
+  ).toBeVisible();
+  await button("Internet").click();
+  await page
+    .getByLabel("Recurring bill name", { exact: true })
+    .fill("Home internet");
+  await page.getByLabel("Payment amount (USD)", { exact: true }).fill("60");
+  await button("Save monthly due").click();
+  await expect(
+    page.getByText("Home internet · Internet", { exact: true }),
+  ).toBeVisible();
+  await button("Upcoming").click();
+  await expect(
+    page.getByText("Apartment rent · $850.00 to Jordan Lee", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Home internet · $60.00 to Jordan Lee", { exact: true }),
+  ).toBeVisible();
+});
+
+test("spending breakdown filters dates and excludes repayment totals", async ({
+  page,
+}) => {
+  const report = page
+    .getByRole("heading", { name: "Spending by category", exact: true })
+    .locator("..");
+  await page.getByRole("button", { name: "All time", exact: true }).click();
+  await expect(report.getByText("Groceries", { exact: true })).toBeVisible();
+  await expect(report.getByText("Dining", { exact: true })).toBeVisible();
+  await expect(
+    report.getByText(
+      /Repayments, card fees, shopping plans, and future recurring schedules are excluded/,
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Last month", exact: true }).click();
+  await expect(
+    report.getByText("Total spent: $0.00", { exact: true }),
+  ).toBeVisible();
+});
