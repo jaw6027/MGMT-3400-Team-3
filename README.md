@@ -13,9 +13,15 @@ This is a self-contained export of the actual Expo web app, including:
 - **Chore Tracker** with 19 spreadsheet chores, custom chores, recurring schedules, fixed or rotating members, and dated completion history.
 - Purchases, camera/library receipt attachment, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
 - Balances, settlement suggestions, manual repayment history, and sample bank/card payments with surcharge previews.
-- Monthly dues and bank-autopay consent, reminder preferences, and simulated phone verification (code **123456**).
+- Named recurring rent, internet, utility and subscription bills, bank-autopay consent, pause/edit/cancel, reminders and simulated phone verification (code **123456**).
+- Seven card-network samples, the credit-only 2.5% fee, two-step security, bank verification, receiver-confirmed cash, searchable history and downloadable receipts.
+- Payment requests with installments and remaining balances, duplicate-payment protection, processing/arrival estimates, safe failure explanations and bank issue alerts.
+- Category spending totals with monthly filters, including dining, groceries, rent, internet, utilities and subscriptions.
+- **Balances → Manage payments → Explore payment demo scenarios** provides one-click processing, failure and bank-issue examples; **Clear demo scenarios** removes only those example records.
 
 Use **sample/made-up information only**. Preview accounts, household codes, receipts, and changes stay in the **same browser**; they are not shared across devices. The preview is a local interaction rehearsal, not real authentication or a secure shared backend. It sends no money, emails, or SMS, and automatic payments/reminders do not execute. The real Supabase/Stripe implementation remains separate and unchanged. Sign out to test another account, or use **Household → Reset demo data** to start over.
+
+For payment setup, use the simulated authenticator code **123456**. Password recovery, bank/card linking, message delivery and background automatic charges are simulations. Device biometric unlock is unavailable in a web browser.
 
 Sample logins: `alex@splitcart.demo`, `jordan@splitcart.demo`, `sam@splitcart.demo`, `riley@splitcart.demo`. All use password `splitcart-demo`. **Open sample household** signs in as Alex without typing credentials.
 

@@ -1140,3 +1140,37 @@ test("spending breakdown filters dates and excludes repayment totals", async ({
     report.getByText("Total spent: $0.00", { exact: true }),
   ).toBeVisible();
 });
+
+test("browser preview exposes safe payment scenarios and clears only example records", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Manage payments").click();
+  await button("Explore payment demo scenarios").click();
+  await button("Show processing payment").click();
+  await expect(
+    page.getByText("$42.00 to Jordan Lee · Processing (demo)", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/^Estimated recipient bank arrival:/),
+  ).toBeVisible();
+  await button("Show failed payment").click();
+  await expect(
+    page.getByText(/Why it failed: There were insufficient funds/),
+  ).toBeVisible();
+  await button("Show bank issue").click();
+  await expect(
+    page.getByText("Bank accounts need attention", { exact: true }),
+  ).toBeVisible();
+  await button("Explore payment demo scenarios").click();
+  await button("Clear demo scenarios").click();
+  await expect(
+    page.getByText("No bank or card payments yet.", { exact: true }),
+  ).toBeVisible();
+  await button("Accounts").click();
+  await expect(
+    page.getByText("Bank accounts need attention", { exact: true }),
+  ).toHaveCount(0);
+});

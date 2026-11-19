@@ -1,4 +1,8 @@
 import {
+  demoPaymentScenario,
+  DemoPaymentScenario,
+} from "./demoPaymentScenarios";
+import {
   validateInstallment,
   RECURRING_CATEGORIES,
 } from "../supabase/functions/_shared/installments";
@@ -650,6 +654,14 @@ export default function PaymentsPanel() {
                 : "Stripe collects account/routing numbers and card details on its secure pages. SplitCart stores provider references only. US bank transfers and USD payments are supported."}
             </Txt>
           </View>
+          {st.demo && (
+            <Button
+              secondary
+              small
+              label="Explore payment demo scenarios"
+              onPress={() => setSection("Activity")}
+            />
+          )}
           {error ? (
             <Txt accessibilityRole="alert" style={{ color: C.red }}>
               {error}
@@ -1819,6 +1831,70 @@ export default function PaymentsPanel() {
               )}
               {section === "Activity" && (
                 <>
+                  {st.demo && (
+                    <View
+                      style={{
+                        padding: 14,
+                        borderRadius: 12,
+                        backgroundColor: C.sage,
+                        gap: 10,
+                      }}
+                    >
+                      <Title style={{ fontSize: 22 }}>
+                        Try payment scenarios
+                      </Title>
+                      <Txt>
+                        Explore processing, failure, and bank-alert screens
+                        without moving money. These examples do not update
+                        household balances. Clear them when finished.
+                      </Txt>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          flexWrap: "wrap",
+                          gap: 8,
+                        }}
+                      >
+                        {(
+                          [
+                            {
+                              id: "processing",
+                              label: "Show processing payment",
+                            },
+                            { id: "failed", label: "Show failed payment" },
+                            { id: "bank", label: "Show bank issue" },
+                            { id: "clear", label: "Clear demo scenarios" },
+                          ] as { id: DemoPaymentScenario; label: string }[]
+                        ).map((scenario) => (
+                          <Button
+                            key={scenario.id}
+                            secondary
+                            small
+                            label={scenario.label}
+                            disabled={busy}
+                            onPress={() =>
+                              void run(async () => {
+                                await persist(
+                                  demoPaymentScenario(
+                                    state,
+                                    scenario.id,
+                                    roommates[0]?.id || "app",
+                                  ),
+                                );
+                                if (scenario.id === "bank")
+                                  setSection("Accounts");
+                                setMessage(
+                                  scenario.id === "clear"
+                                    ? "Example scenarios cleared. Your other preview data was kept."
+                                    : "Example loaded. No money moved and no messages were sent.",
+                                );
+                              })
+                            }
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  )}
                   <Title style={{ fontSize: 22 }}>Payment activity</Title>
                   <Txt style={s.muted}>
                     Only confirmed payments update household balances. Manual
