@@ -32,3 +32,7 @@ verify_jwt = false
 # Handler verifies JWT and household membership before loading private images.
 [functions.scan-receipt]
 verify_jwt = false
+
+# Handler checks the live developer allowlist and fresh password/TOTP itself.
+[functions.developer-business]
+verify_jwt = false

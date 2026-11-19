@@ -10,7 +10,7 @@
     "web": "expo start --web --host lan",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:db": "vitest run src/receipts-database.test.ts src/installments-database.test.ts src/database.test.ts src/households-database.test.ts src/payments-database.test.ts src/paymentSafety-database.test.ts src/shopping-database.test.ts src/chores-database.test.ts",
+    "test:db": "vitest run src/developer-business-database.test.ts src/receipts-database.test.ts src/installments-database.test.ts src/database.test.ts src/households-database.test.ts src/payments-database.test.ts src/paymentSafety-database.test.ts src/shopping-database.test.ts src/chores-database.test.ts",
     "build:web": "expo export --platform web",
     "test:e2e": "playwright test",
     "format": "prettier --write App.tsx src e2e *.ts *.json",

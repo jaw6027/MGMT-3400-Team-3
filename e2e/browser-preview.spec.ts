@@ -1302,3 +1302,35 @@ test("sample receipt extraction is reviewable, matches the printed total, and ne
   await button("Save purchase").click();
   await expect(button("View Green Market receipt")).toBeVisible();
 });
+
+test("ordinary preview users never receive developer business controls, even with client-side role claims", async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("developer-business")) requests.push(r.url());
+  });
+  await page.evaluate(() =>
+    localStorage.setItem(
+      "splitcart-developer-role",
+      JSON.stringify({ developer: true, role: "developer", authorized: true }),
+    ),
+  );
+  await page.getByRole("tab", { name: "Household", exact: true }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Developer business settings",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Open developer settings", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Open secure business bank settings",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(requests).toEqual([]);
+});

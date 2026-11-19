@@ -1,3 +1,4 @@
+import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
 import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
 import {
   calculateReceipt,
@@ -2614,6 +2615,7 @@ function HouseholdSettings({ notify }: { notify: (m: string) => void }) {
   };
   return (
     <>
+      <DeveloperBusinessSettings />
       <SecuritySettings />
       <AccessibilitySettings />
       <View>

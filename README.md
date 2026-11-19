@@ -273,3 +273,11 @@ An optional server-side **Scan receipt items** integration can extract receipt f
 Cashback fields track **external card or retailer rewards** that you expect or report as received. They do not change roommate debts or spending. SplitCart does not fund, verify, issue, pay out or redeem cashback. A separate summary appears under the category breakdown when rewards have been recorded.
 
 Receipt previews: [calculated roommate amounts](docs/previews/receipt-item-split.png), [itemized receipt with photo](docs/previews/itemized-receipt-details.png), and [external cashback tracker](docs/previews/cashback-tracker.png).
+
+## Developer-only business and payout-bank settings
+
+The live app now supports **Household → Developer business settings** for explicitly approved app-developer accounts. Ordinary users and public-demo accounts never see these controls. Server-side role checks, private database tables and fresh password/TOTP verification protect business profile and financial responses; frontend visibility alone is not the security boundary.
+
+Developers can record the business legal name, Corporation/LLC/Sole proprietorship structure, and a compatible tax classification such as C corporation or S corporation. This is an internal record, not a filing or tax election. The business-funds panel shows available/pending Stripe platform balances and masked bank metadata, and opens Stripe's secure business payout-bank settings for account/routing entry. SplitCart never stores full bank numbers or initiates a payout from this screen. Roommate payment destinations stay unchanged.
+
+Deploy migration `202611190006_developer_business.sql` and `developer-business`, then have a trusted database operator grant the verified developers' Auth UUIDs. No users are granted access automatically. See [provisioning, privacy and deployment](docs/payments.md#private-developer-business-settings). The public preview intentionally contains no developer account, private-data sample or developer-mode bypass.
