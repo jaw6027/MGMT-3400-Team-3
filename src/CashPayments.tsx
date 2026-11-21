@@ -1,3 +1,5 @@
+import { outsidePaymentName } from "./externalPayments";
+import { PaymentBrandLogo } from "./PaymentBrandLogo";
 import React, { useState } from "react";
 import { View } from "react-native";
 import { useStore } from "./store";
@@ -27,10 +29,15 @@ export function CashPayments() {
   };
   return (
     <View style={[s.card, { gap: 16 }]}>
-      <Title style={{ fontSize: 24 }}>Cash confirmations</Title>
+      <Title style={{ fontSize: 24 }}>
+        {records.some((p) => p.channel && p.channel !== "cash")
+          ? "Cash & outside payment confirmations"
+          : "Cash confirmations"}
+      </Title>
       <Txt>
         Only the receiving roommate can confirm receipt. Pending and disputed
-        cash do not change balances.
+        outside payments do not change balances. Receiver confirmation is not a
+        provider-verified transaction status.
       </Txt>
       {!records.length && (
         <Txt style={s.muted}>No cash entries awaiting review.</Txt>
@@ -50,12 +57,15 @@ export function CashPayments() {
             borderColor: C.line,
           }}
         >
+          {p.channel && p.channel !== "cash" && (
+            <PaymentBrandLogo brand={p.channel} />
+          )}
           <Txt style={{ fontFamily: "DMBold" }}>
             {money(p.cents, st.household?.currency)} · {name(p.from_id)} to{" "}
             {name(p.to_id)}
           </Txt>
           <Txt>
-            Cash · {p.date} ·{" "}
+            {outsidePaymentName(p.channel)} · {p.date} ·{" "}
             {p.status === "pending"
               ? "Awaiting receiver confirmation"
               : p.status === "confirmed"
@@ -65,13 +75,13 @@ export function CashPayments() {
           {p.status === "pending" && p.to_id === self?.id && (
             <>
               <Button
-                label={`Confirm cash received from ${name(p.from_id)}`}
+                label={`Confirm ${p.channel && p.channel !== "cash" ? outsidePaymentName(p.channel) : "cash"} received from ${name(p.from_id)}`}
                 disabled={!!busy}
                 onPress={() => void resolve(p.id, "confirmed")}
               />
               <Button
                 secondary
-                label={`Dispute cash from ${name(p.from_id)}`}
+                label={`Dispute ${p.channel && p.channel !== "cash" ? outsidePaymentName(p.channel) : "cash"} from ${name(p.from_id)}`}
                 disabled={!!busy}
                 onPress={() => void resolve(p.id, "disputed")}
               />
@@ -79,14 +89,14 @@ export function CashPayments() {
           )}
           {p.status === "pending" && p.from_id === self?.id && (
             <Txt style={s.muted}>
-              Waiting for {name(p.to_id)} to confirm. Don’t record the same cash
-              payment again.
+              Waiting for {name(p.to_id)} to confirm. Don’t record the same
+              outside payment again.
             </Txt>
           )}
           {p.status === "disputed" && (
             <Txt>
               Contact your roommate to resolve the disagreement. If the entry
-              was incorrect, create a corrected cash entry for their review.
+              was incorrect, create a corrected payment entry for their review.
             </Txt>
           )}
         </View>

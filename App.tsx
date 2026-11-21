@@ -1,3 +1,4 @@
+import { ExternalPayments } from "./src/ExternalPayments";
 import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
 import SupportChat from "./src/SupportChat";
 import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
@@ -1426,6 +1427,7 @@ function Balances({ onRepay }: { onRepay: () => void }) {
         <Button label="Record repayment" icon="Plus" onPress={onRepay} />
       </View>
       <PaymentsPanel />
+      <ExternalPayments />
       <CashPayments />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
         {st.members.map((m, i) => (
@@ -1537,9 +1539,13 @@ function Balances({ onRepay }: { onRepay: () => void }) {
                   <Txt style={{ fontSize: 10, color: C.muted, marginTop: 5 }}>
                     {r.method === "cash"
                       ? "Cash payment"
-                      : r.method === "bank_card"
-                        ? "Bank / card payment"
-                        : "Recorded payment"}{" "}
+                      : r.method === "venmo"
+                        ? "Venmo · receiver confirmed"
+                        : r.method === "zelle"
+                          ? "Zelle · receiver confirmed"
+                          : r.method === "bank_card"
+                            ? "Bank / card payment"
+                            : "Recorded payment"}{" "}
                     · {shortDate(r.date)}
                   </Txt>
                 </View>

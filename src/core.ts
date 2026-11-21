@@ -26,7 +26,7 @@ export type Expense = {
   created_at: string;
 };
 export type Repayment = {
-  method?: "cash" | "other" | "bank_card";
+  method?: "cash" | "other" | "bank_card" | "venmo" | "zelle";
   id: string;
   household_id: string;
   from_id: string;
@@ -42,6 +42,7 @@ export type Household = {
   invite_code: string;
 };
 export type CashPayment = Repayment & {
+  channel?: "cash" | "venmo" | "zelle";
   status: "pending" | "confirmed" | "disputed";
   proposed_by: string;
   resolved_by?: string;

@@ -322,11 +322,13 @@ export function Chip({
   active = false,
   onPress,
   icon,
+  leading,
 }: {
   label: string;
   active?: boolean;
   onPress?: () => void;
   icon?: IconName;
+  leading?: React.ReactNode;
 }) {
   return (
     <Pressable
@@ -349,6 +351,7 @@ export function Chip({
         borderColor: active ? "#A7C3A8" : C.line,
       }}
     >
+      {leading}
       {icon && <Icon name={icon} size={14} color={C.green} />}
       <Txt
         style={{

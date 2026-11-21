@@ -1,3 +1,5 @@
+import { PaymentBrandLogo } from "./PaymentBrandLogo";
+import { bankBrand, methodBrand } from "./paymentBrands";
 import {
   demoPaymentScenario,
   DemoPaymentScenario,
@@ -986,7 +988,25 @@ export default function PaymentsPanel() {
                     </View>
                   )}
                   <Txt style={s.label}>BANK ACCOUNT LINKING</Txt>
-                  <Txt>{BANK_NAMES.join(" · ")}</Txt>
+                  <View
+                    testID="bank-brand-catalog"
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}
+                  >
+                    {BANK_NAMES.map((bank) => (
+                      <View
+                        key={bank}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 7,
+                          maxWidth: "100%",
+                        }}
+                      >
+                        <PaymentBrandLogo brand={bankBrand(bank)} />
+                        <Txt>{bank}</Txt>
+                      </View>
+                    ))}
+                  </View>
                   <Txt style={s.muted}>
                     Search for your bank on the secure provider page, or choose
                     account and routing numbers when offered. Eligible US ACH
@@ -1016,9 +1036,25 @@ export default function PaymentsPanel() {
                     onPress={() => void run(() => setup("bank"))}
                   />
                   <Txt style={s.label}>CARD NETWORKS</Txt>
-                  <Txt>
-                    {CARD_NETWORKS.map((network) => network.name).join(" · ")}
-                  </Txt>
+                  <View
+                    testID="card-brand-catalog"
+                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}
+                  >
+                    {CARD_NETWORKS.map((network) => (
+                      <View
+                        key={network.id}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 7,
+                          maxWidth: "100%",
+                        }}
+                      >
+                        <PaymentBrandLogo brand={network.id} />
+                        <Txt>{network.name}</Txt>
+                      </View>
+                    ))}
+                  </View>
                   <Txt style={s.muted}>
                     Available through secure card setup where supported by the
                     card issuer and payment provider. Credit cards have a 2.5%
@@ -1038,6 +1074,7 @@ export default function PaymentsPanel() {
                           <Chip
                             key={network.id}
                             label={network.name}
+                            leading={<PaymentBrandLogo brand={network.id} />}
                             active={sampleBrand === network.id}
                             onPress={() => setSampleBrand(network.id)}
                           />
@@ -1087,6 +1124,7 @@ export default function PaymentsPanel() {
                     >
                       <Chip
                         active={selected === m.id}
+                        leading={<PaymentBrandLogo brand={methodBrand(m)} />}
                         label={`${m.label}${m.verification === "pending" ? " · Verification pending" : m.issue ? " · Needs attention" : ""}`}
                         onPress={() => {
                           setSelected(m.id);
@@ -1210,6 +1248,7 @@ export default function PaymentsPanel() {
                         <Chip
                           key={m.id}
                           active={selected === m.id}
+                          leading={<PaymentBrandLogo brand={methodBrand(m)} />}
                           label={`${m.label} · ${m.funding === "credit" ? "2.5% fee" : "No surcharge"}`}
                           onPress={() => {
                             setSelected(m.id);

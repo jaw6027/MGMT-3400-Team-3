@@ -572,7 +572,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
     }
   };
   const repay = async (r: Repayment) => {
-    if (r.method === "cash")
+    if (r.method === "cash" || r.method === "venmo" || r.method === "zelle")
       throw new Error(
         "Cash payments need the receiving roommate’s confirmation.",
       );
@@ -593,6 +593,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
     }
   };
   const proposeCash = async (r: Repayment) => {
+    if (r.method && !["cash", "venmo", "zelle"].includes(r.method))
+      throw new Error("Choose cash, Venmo or Zelle.");
+    const channel =
+      r.method === "venmo" || r.method === "zelle" ? r.method : "cash";
     const self = dataRef.current.members.find((m) => m.user_id === user?.id);
     if (
       !self ||
@@ -639,14 +643,16 @@ export function Provider({ children }: { children: React.ReactNode }) {
           old.from_id !== r.from_id ||
           old.to_id !== r.to_id ||
           old.cents !== r.cents ||
-          old.date !== r.date
+          old.date !== r.date ||
+          (old.channel || "cash") !== channel
         )
           throw new Error("Cash entry cannot be changed.");
         return;
       }
       const cash: CashPayment = {
         ...r,
-        method: "cash",
+        method: channel,
+        channel,
         status: "pending",
         proposed_by: user!.id,
         created_at: new Date().toISOString(),
@@ -699,7 +705,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
                   cents: p.cents,
                   date: p.date,
                   recorded_by: p.proposed_by,
-                  method: "cash",
+                  method: p.channel || "cash",
                 },
                 ...d.repayments,
               ]

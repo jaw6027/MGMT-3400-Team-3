@@ -292,3 +292,13 @@ Use the floating chat button for **SplitMate Assistant**, SplitCart’s local su
 Open **Rotation** on a phone or **Grocery & Restock Rotation** in the sidebar. Choose participants and cadence, see who is next, mark a completed turn, or request an agreed swap. Report essentials as Running Low to place them on the existing shared shopping list with the responsible shopper and shopping notes. Grocery duty and expense shares stay separate. Both demo modes persist changes locally; the browser preview’s separate sample accounts demonstrate swap acceptance in the same browser. Grocery reminders are in-app only.
 
 For live mode, apply `202611190007_grocery_rotation.sql` after prior migrations before deploying. See [demo walkthrough, scheduling rules, storage limitations and tests](docs/grocery-rotation.md). The assistant now also understands short prompts such as “rent,” “owe,” “low,” “swap,” “who’s next,” and contextual “how?”.
+
+## Venmo / Zelle and bank-card logos
+
+**Balances → Venmo & Zelle** provides an outside-payment flow: open the recipient's Venmo profile or find your participating Zelle bank, complete payment there, then record it in SplitCart. The receiving roommate must confirm it before the balance changes, and can dispute it. Navigation is not a transfer or a settlement confirmation. Contacts are entered once and are not stored; SplitCart does not link outside-service credentials or add its card surcharge to these records. The demo simulates navigation and confirmations without moving money.
+
+All seven requested card networks and eight banks now have bundled provider artwork beside their names, with logos on recognized saved methods and Venmo/Zelle choices. Logos load locally in the web preview and native app; unknown providers retain a generic icon. See [artwork sources](assets/payment-brands/SOURCES.md).
+
+Apply `202611210001_external_payments.sql` before deploying the updated app. Cash confirmations and duplicate safeguards are preserved. Outside payments do not automatically settle a request/monthly due or cancel autopay; review overlapping schedules before paying. See [flow details and limitations](docs/payments.md#venmo-zelle-and-provider-logos).
+
+Visual previews: [bank logos](docs/previews/bank-logos.png), [card logos](docs/previews/card-logos.png), [Venmo](docs/previews/venmo-outside-payment.png), [Zelle](docs/previews/zelle-outside-payment.png).

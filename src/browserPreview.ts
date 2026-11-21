@@ -301,6 +301,10 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
           }
           if (name === "propose_cash_payment") {
             const r = payload.payload as Repayment;
+            if (r.method && !["cash", "venmo", "zelle"].includes(r.method))
+              throw new Error("Choose cash, Venmo or Zelle.");
+            const channel =
+              r.method === "venmo" || r.method === "zelle" ? r.method : "cash";
             requireHouse(db, user.id, r.household_id);
             if (
               !active ||
@@ -326,7 +330,8 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
                 old.from_id !== r.from_id ||
                 old.to_id !== r.to_id ||
                 old.cents !== r.cents ||
-                old.date !== r.date
+                old.date !== r.date ||
+                (old.channel || "cash") !== channel
               )
                 throw new Error("Cash entry cannot be changed.");
               return json(old.id);
@@ -336,7 +341,8 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
             db.cashPayments = [
               {
                 ...r,
-                method: "cash",
+                method: channel,
+                channel,
                 status: "pending",
                 proposed_by: user.id,
                 created_at: new Date().toISOString(),
@@ -376,7 +382,7 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
                 cents: cash.cents,
                 date: cash.date,
                 recorded_by: cash.proposed_by,
-                method: "cash",
+                method: cash.channel || "cash",
               });
             }
             cash.status = decision;
@@ -755,7 +761,11 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
           const table = path.split("/").pop();
           if (method === "POST" && table === "repayments") {
             const r = payload as Repayment;
-            if (r.method === "cash")
+            if (
+              r.method === "cash" ||
+              r.method === "venmo" ||
+              r.method === "zelle"
+            )
               throw new Error("Cash requires receiver confirmation.");
             requireHouse(db, user.id, r.household_id);
             if (

@@ -909,12 +909,22 @@ test("manual bank linking starts ownership verification and cannot be used befor
   await button("Manage payments").click();
   const manual = button("Try sample account-and-routing verification");
   await expect(manual).toBeDisabled();
-  await expect(
-    page.getByText(
-      "Wells Fargo · Chase · Bank of America · Citibank · Goldman Sachs · Capital One · US Bank · PNC Bank",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  for (const bank of [
+    "Wells Fargo",
+    "Chase",
+    "Bank of America",
+    "Citibank",
+    "Goldman Sachs",
+    "Capital One",
+    "US Bank",
+    "PNC Bank",
+  ])
+    await expect(
+      page
+        .getByTestId("bank-brand-catalog")
+        .getByText(bank, { exact: true })
+        .last(),
+    ).toBeVisible();
   await verifySampleSecurity(page);
   await manual.click();
   await expect(
@@ -1333,4 +1343,133 @@ test("ordinary preview users never receive developer business controls, even wit
     }),
   ).toHaveCount(0);
   expect(requests).toEqual([]);
+});
+
+test("Venmo handoff stays unconfirmed until the receiver approves and Zelle cannot duplicate it", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await page
+    .getByLabel("Outside payment amount (USD)", { exact: true })
+    .fill("50");
+  await page
+    .getByLabel("Recipient Venmo username (to open profile)", { exact: true })
+    .fill("@sample-jordan");
+  await button("Open recipient’s Venmo profile").click();
+  await expect(
+    page.getByText(/Demo only: Venmo navigation is simulated/),
+  ).toBeVisible();
+  await expect(button("Record sent Venmo payment")).toBeDisabled();
+  await page
+    .getByRole("switch", {
+      name: "I already sent this Venmo payment",
+      exact: true,
+    })
+    .click();
+  await button("Record sent Venmo payment").click();
+  await expect(
+    page.getByText(/Venmo record is awaiting Jordan Lee/),
+  ).toBeVisible();
+  const before = await page.evaluate(() =>
+    JSON.parse(
+      localStorage.getItem("splitcart-browser-preview-v1")!,
+    ).repayments.filter((r: any) => r.method === "venmo"),
+  );
+  expect(before).toHaveLength(0);
+  await button("Zelle").click();
+  await page
+    .getByLabel("Recipient Zelle email or US mobile (to open bank finder)", {
+      exact: true,
+    })
+    .fill("jordan@example.test");
+  await button("Find my Zelle bank").click();
+  await expect(page.getByText(/Possible duplicate payment/)).toBeVisible();
+  await signout(page);
+  await page
+    .getByLabel("Email address", { exact: true })
+    .fill("jordan@splitcart.demo");
+  await page.getByLabel("Password", { exact: true }).fill("splitcart-demo");
+  await button("Log in").click();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Confirm Venmo received from Alex Morgan").click();
+  await expect(page.getByText(/Receipt confirmed · Balance updated/)).toBeVisible();
+  const after = await page.evaluate(() =>
+    JSON.parse(
+      localStorage.getItem("splitcart-browser-preview-v1")!,
+    ).repayments.filter((r: any) => r.method === "venmo"),
+  );
+  expect(after).toHaveLength(1);
+  expect(after[0].cents).toBe(5000);
+});
+
+test("Zelle records can be disputed without crediting the ledger", async ({
+  page,
+}) => {
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Zelle").click();
+  await page
+    .getByLabel("Outside payment amount (USD)", { exact: true })
+    .fill("35");
+  await page
+    .getByLabel("Recipient Zelle email or US mobile (to open bank finder)", {
+      exact: true,
+    })
+    .fill("4155550123");
+  await button("Find my Zelle bank").click();
+  await expect(
+    page.getByText(/Demo only: Zelle navigation is simulated/),
+  ).toBeVisible();
+  await page
+    .getByRole("switch", {
+      name: "I already sent this Zelle payment",
+      exact: true,
+    })
+    .click();
+  await button("Record sent Zelle payment").click();
+  await expect(
+    page.getByText(/Zelle record is awaiting Jordan Lee/),
+  ).toBeVisible();
+  await signout(page);
+  await page
+    .getByLabel("Email address", { exact: true })
+    .fill("jordan@splitcart.demo");
+  await page.getByLabel("Password", { exact: true }).fill("splitcart-demo");
+  await button("Log in").click();
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await button("Dispute Zelle from Alex Morgan").click();
+  await expect(page.getByText(/Disputed · Balance unchanged/)).toBeVisible();
+  const rows = await page.evaluate(() =>
+    JSON.parse(
+      localStorage.getItem("splitcart-browser-preview-v1")!,
+    ).repayments.filter((r: any) => r.method === "zelle"),
+  );
+  expect(rows).toHaveLength(0);
+});
+
+test("all requested card and bank logos are bundled and displayed beside their names", async ({
+  page,
+}) => {
+  const external: string[] = [];
+  page.on("request", (request) => {
+    if (
+      !request.url().startsWith("http://localhost:") &&
+      !request.url().startsWith("data:") &&
+      !request.url().startsWith("blob:")
+    )
+      external.push(request.url());
+  });
+  await page.getByRole("tab", { name: "Balances", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage payments", exact: true })
+    .click();
+  const banks = page.getByTestId("bank-brand-catalog"),
+    cards = page.getByTestId("card-brand-catalog");
+  await expect(banks.locator("svg")).toHaveCount(6);
+  await expect(banks.locator("img")).toHaveCount(2);
+  await expect(cards.locator("svg")).toHaveCount(7);
+  expect(external).toEqual([]);
 });
