@@ -1,3 +1,4 @@
+import type { SplitTemplate } from "./splitTemplates";
 import { percentageSplit } from "./percentageSplit";
 import type { GroceryState } from "./grocery";
 import { calculateReceipt } from "./receiptItems";
@@ -102,6 +103,7 @@ export type ChoreCompletion = {
   voided_by?: string | null;
 };
 export type Data = {
+  splitTemplates?: SplitTemplate[];
   grocery?: GroceryState;
   chores?: Chore[];
   choreCompletions?: ChoreCompletion[];

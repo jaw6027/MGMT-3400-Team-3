@@ -183,6 +183,14 @@ async function backend(page: Page) {
         await respond(r.rows[0]);
         return;
       }
+      if (path.endsWith("/split_templates")) {
+        const result = await db.query(
+          "select * from split_templates where household_id=$1 order by id",
+          [value("household_id")],
+        );
+        await respond(result.rows);
+        return;
+      }
       if (
         path.endsWith("/expenses") ||
         path.endsWith("/repayments") ||

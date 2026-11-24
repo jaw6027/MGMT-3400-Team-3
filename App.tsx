@@ -3,6 +3,7 @@ import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
 import SupportChat from "./src/SupportChat";
 import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
 import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
+import { SplitTemplates } from "./src/SplitTemplates";
 import { percentageSplit } from "./src/percentageSplit";
 import {
   calculateReceipt,
@@ -2142,6 +2143,22 @@ function PurchaseEditor({
               match.
             </Txt>
           )}
+          <SplitTemplates
+            purchaseAllocations={percentageEntries}
+            onApply={(allocations) => {
+              setSplitMode("percentage");
+              setSelected(allocations.map(({ member_id }) => member_id));
+              setPercentages(
+                Object.fromEntries(
+                  allocations.map(({ member_id, percentage }) => [
+                    member_id,
+                    percentage,
+                  ]),
+                ),
+              );
+              setError("");
+            }}
+          />
           <View style={s.divider} />
         </>
       )}

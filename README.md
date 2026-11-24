@@ -60,9 +60,13 @@ npx expo run:android
 
 For a physical Android device, scan the QR code in compatible Expo Go or connect it with USB debugging for a native build. Camera access requires a real device or configured emulator camera. Browser photo selection uses the browser's file picker.
 
+## Reuse a purchase split
+
+In the purchase editor, open **Split templates** to create, edit, delete, or apply a household template. Starting from a percentage purchase copies its selected roommates and allocations into the new template draft. A template must total 100%. Applying it copies the percentages into the purchase, where you can adjust them independently. If a roommate leaves, edit the template and redistribute their percentage before using it again.
+
 ## Enable the live Supabase backend
 
-Apply `202611240001_percentage_splits.sql` before deploying percentage splitting to an existing live backend. It stores the entered percentages so purchases can be reopened and edited without losing the original split.
+Apply `202611240001_percentage_splits.sql` before deploying percentage splitting to an existing live backend. It stores the entered percentages so purchases can be reopened and edited without losing the original split. Apply `202611240002_split_templates.sql` next to enable reusable household templates.
 
 1. Create a Supabase project. In its SQL Editor, apply every SQL file in `supabase/migrations/` **once, in filename order**. For an existing project, apply only migrations not already installed. The base migration creates tables, RLS, and private receipts; `202611170001_payments.sql` adds payment support; `202611180001_household_signup.sql` adds retry-safe signup onboarding and household renaming; `202611180002_payment_experience.sql` adds paused schedules, payment requests, private account alerts, and serialized occurrence payments; `202611180003_payment_verification_updates.sql` adds cash labels, bank-link progress, and notification delivery claims; `202611180004_cash_confirmation_recovery.sql` adds receiver-approved cash, cancel-autopay transactions, and hashed one-time MFA recovery codes. No manual public-bucket setup is necessary.
 2. Copy your project URL and **public anon key** from Project Settings → API into `.env`:

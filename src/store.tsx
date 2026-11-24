@@ -1,4 +1,9 @@
 import {
+  deleteLocalSplitTemplate,
+  saveLocalSplitTemplate,
+  SplitTemplate,
+} from "./splitTemplates";
+import {
   applyGrocery,
   emptyGrocery,
   syncGroceryShopping,
@@ -253,7 +258,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
     setData(d);
     dataRef.current = d;
   };
-  const mutateDemoShopping = async (update: (latest: Data) => Data) => {
+  const mutateDemoData = async (update: (latest: Data) => Data) => {
     const house = dataRef.current.household?.id;
     await groceryLocalLock(async () => {
       const raw = await AsyncStorage.getItem("splitcart-demo-v1");
@@ -262,6 +267,34 @@ export function Provider({ children }: { children: React.ReactNode }) {
         throw new Error("The active household changed. Refresh and try again.");
       await persist(syncGroceryShopping(update(latest)));
     });
+  };
+  const changeSplitTemplate = async (
+    template: SplitTemplate,
+    remove = false,
+  ) => {
+    if (!user || template.household_id !== dataRef.current.household?.id)
+      throw new Error("This template is unavailable in your household.");
+    if (demo)
+      return mutateDemoData((latest) => ({
+        ...latest,
+        splitTemplates: remove
+          ? deleteLocalSplitTemplate(latest.splitTemplates || [], template)
+          : saveLocalSplitTemplate(
+              latest.splitTemplates || [],
+              template,
+              latest.members,
+            ),
+      }));
+
+    const { error } = remove
+      ? await client().rpc("delete_split_template", {
+          template_id: template.id,
+          household_id: template.household_id,
+          expected_version: template.version,
+        })
+      : await client().rpc("save_split_template", { payload: template });
+    await refresh();
+    if (error) throw error;
   };
   const groceryAction = async (command: GroceryCommand, version: number) => {
     const house = dataRef.current.household?.id;
@@ -361,7 +394,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
     if (!canEdit(user!.id, e, dataRef.current.members))
       throw new Error("Only the roommate who paid can delete this purchase.");
     if (demo)
-      await mutateDemoShopping((latest) => {
+      await mutateDemoData((latest) => {
         const current = latest.expenses.find((x) => x.id === e.id);
         if (current && !canEdit(user!.id, current, latest.members))
           throw new Error(
@@ -395,7 +428,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
         "Purchased items stay in history. Edit the linked purchase instead.",
       );
     if (demo)
-      await mutateDemoShopping((latest) => {
+      await mutateDemoData((latest) => {
         if (groceryEssentialFor(latest, item.id))
           throw new Error("Edit this essential in Grocery & Restock Rotation.");
         validateShoppingItem(item, latest.members);
@@ -435,7 +468,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
         "Only planned items can be removed. Purchased items stay in history.",
       );
     if (demo)
-      await mutateDemoShopping((latest) => {
+      await mutateDemoData((latest) => {
         if (groceryEssentialFor(latest, id))
           throw new Error(
             "This item is on the shared restocking list. Record its purchase or update the essential.",
@@ -802,6 +835,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{
         ...data,
+        splitTemplates: (data.splitTemplates || []).filter(
+          (template) => template.household_id === data.household?.id,
+        ),
+        changeSplitTemplate,
         shoppingItems: syncGroceryShopping(data).shoppingItems || [],
         grocery: data.grocery || emptyGrocery(),
         groceryAction,
@@ -870,6 +907,11 @@ export function Provider({ children }: { children: React.ReactNode }) {
   );
 }
 export function useStore(): Data & {
+  splitTemplates: SplitTemplate[];
+  changeSplitTemplate: (
+    template: SplitTemplate,
+    remove?: boolean,
+  ) => Promise<void>;
   grocery: GroceryState;
   groceryAction: (command: GroceryCommand, version: number) => Promise<void>;
   recovering: boolean;
