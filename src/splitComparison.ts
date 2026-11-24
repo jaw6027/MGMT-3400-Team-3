@@ -56,12 +56,12 @@ export function compareSplits(
     validateShareTotal(cents, shares);
     return shares;
   });
-  const memberIds = new Set([
-    ...selected,
-    ...(option.mode === "template"
-      ? option.template?.allocations.map((entry) => entry.member_id) || []
-      : []),
-  ]);
+  const equalMembers = new Set(selected);
+  const alternativeMembers =
+    option.mode === "template"
+      ? new Set(option.template?.allocations.map((entry) => entry.member_id))
+      : equalMembers;
+  const memberIds = new Set([...equalMembers, ...alternativeMembers]);
   const equalAmounts = new Map(
     equal.shares?.map(({ member_id, cents }) => [member_id, cents]),
   );
@@ -75,6 +75,8 @@ export function compareSplits(
       : null;
     return {
       memberId,
+      includedInEqual: equalMembers.has(memberId),
+      includedInAlternative: alternativeMembers.has(memberId),
       equalCents,
       alternativeCents,
       difference:

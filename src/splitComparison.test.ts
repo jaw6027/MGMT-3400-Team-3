@@ -29,12 +29,16 @@ describe("split comparison", () => {
     expect(result.rows).toEqual([
       {
         memberId: "b",
+        includedInEqual: true,
+        includedInAlternative: true,
         equalCents: 500,
         alternativeCents: 400,
         difference: -100,
       },
       {
         memberId: "a",
+        includedInEqual: true,
+        includedInAlternative: true,
         equalCents: 501,
         alternativeCents: 601,
         difference: 100,
@@ -106,18 +110,53 @@ describe("split comparison", () => {
     expect(result.rows).toEqual([
       {
         memberId: "a",
+        includedInEqual: true,
+        includedInAlternative: true,
         equalCents: 501,
         alternativeCents: 601,
         difference: 100,
       },
-      { memberId: "b", equalCents: 500, alternativeCents: 0, difference: -500 },
-      { memberId: "c", equalCents: 0, alternativeCents: 400, difference: 400 },
+      {
+        memberId: "b",
+        includedInEqual: true,
+        includedInAlternative: false,
+        equalCents: 500,
+        alternativeCents: 0,
+        difference: -500,
+      },
+      {
+        memberId: "c",
+        includedInEqual: false,
+        includedInAlternative: true,
+        equalCents: 0,
+        alternativeCents: 400,
+        difference: 400,
+      },
     ]);
     expect(result.preferred).toEqual({
       mode: "percentage",
       allocations: template.allocations,
     });
     expect(JSON.stringify(template)).toBe(snapshot);
+    const zeroShare = {
+      ...template,
+      allocations: [
+        { member_id: "a", percentage: "100" },
+        { member_id: "c", percentage: "0" },
+      ],
+    };
+    expect(
+      compareSplits(
+        1001,
+        ["a", "b"],
+        { mode: "template", template: zeroShare },
+        members,
+      ).rows[2],
+    ).toMatchObject({
+      includedInEqual: false,
+      includedInAlternative: true,
+      alternativeCents: 0,
+    });
     const former = [
       ...members.slice(0, 2),
       { ...members[2], left_at: "2026-11-23" },

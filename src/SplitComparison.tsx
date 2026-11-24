@@ -135,12 +135,23 @@ export function SplitComparison({
         <Txt style={styles.heading}>{label}</Txt>
       </View>
       {comparison.rows.map(
-        ({ memberId, equalCents, alternativeCents, difference }) => {
+        ({
+          memberId,
+          includedInEqual,
+          includedInAlternative,
+          equalCents,
+          alternativeCents,
+          difference,
+        }) => {
           const name =
             members.find(({ id }) => memberId === id)?.name ||
             "Former roommate";
-          const equalAmount = format(equalCents);
-          const alternativeAmount = format(alternativeCents);
+          const equalAmount = includedInEqual
+            ? format(equalCents)
+            : "Not included";
+          const alternativeAmount = includedInAlternative
+            ? format(alternativeCents)
+            : "Not included";
           const delta =
             difference === null
               ? null

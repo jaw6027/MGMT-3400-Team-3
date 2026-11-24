@@ -72,8 +72,10 @@ test("compare live allocations and apply a split without saving a duplicate or c
   await button(page, "Save template").click();
   await expect(button(page, "Use template Utilities comparison")).toBeVisible();
   await button(page, "Saved template").click();
-  await expect(label(page, "Jordan Lee, Saved template: $0.00")).toBeVisible();
-  await expect(label(page, "Sam Rivera, equal: $0.00")).toBeVisible();
+  await expect(
+    label(page, "Jordan Lee, Saved template: Not included"),
+  ).toBeVisible();
+  await expect(label(page, "Sam Rivera, equal: Not included")).toBeVisible();
   await expect(label(page, "Sam Rivera: +$8.00 vs equal")).toBeVisible();
 
   await button(page, "Apply template").click();
