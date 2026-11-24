@@ -68,6 +68,10 @@ In the purchase editor, open **Split templates** to create, edit, delete, or app
 
 In the purchase editor, open **Compare splits** to see the equal split beside a custom-dollar split, a percentage split, or a saved template. Each row shows the amount and its difference from equal splitting. Edit comparison values or change the purchase total to update the results, then apply a valid split to the purchase draft. Equal splitting uses the roommates selected in the purchase editor. Templates use their saved roommates.
 
+## Check split fairness
+
+Open **Check fairness** in the purchase editor to see the selected allocation and its dollar difference from an equal split among the same roommates. The checker highlights shares that differ by at least 10 percentage points from equal and accounts for ordinary cent rounding. An uneven split can reflect the roommates’ agreement. The check is informational, and standard purchase validation still applies.
+
 ## Enable the live Supabase backend
 
 Apply `202611240001_percentage_splits.sql` before deploying percentage splitting to an existing live backend. It stores the entered percentages so purchases can be reopened and edited without losing the original split. Apply `202611240002_split_templates.sql` next to enable reusable household templates.

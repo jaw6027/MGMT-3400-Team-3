@@ -3,6 +3,7 @@ import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
 import SupportChat from "./src/SupportChat";
 import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
 import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
+import { SplitFairness } from "./src/SplitFairness";
 import { SplitComparison } from "./src/SplitComparison";
 import { SplitTemplates } from "./src/SplitTemplates";
 import { percentageSplit } from "./src/percentageSplit";
@@ -1701,7 +1702,7 @@ function PurchaseEditor({
         }))
       : null;
   let shares: Expense["shares"] = [];
-  let percentageError = "";
+  let splitError = "";
   try {
     if (itemized) shares = receiptCalculation?.shares || [];
     else if (percentageEntries)
@@ -1710,8 +1711,9 @@ function PurchaseEditor({
       shares = customDollarShares(selected, customAmounts);
     else shares = equalSplit(cents, selected);
   } catch (e) {
-    if (percentageEntries) percentageError = (e as Error).message;
+    splitError = (e as Error).message;
   }
+  const percentageError = percentageEntries ? splitError : "";
   const applyPercentages = (
     allocations: NonNullable<Expense["split_percentages"]>,
   ) => {
@@ -2154,6 +2156,16 @@ function PurchaseEditor({
               match.
             </Txt>
           )}
+          <SplitFairness
+            cents={cents}
+            selected={selected}
+            shares={shares}
+            percentages={percentageEntries}
+            mode={splitMode}
+            members={available}
+            currency={st.household?.currency}
+            calculationError={splitError}
+          />
           <SplitComparison
             cents={cents}
             selected={selected}
