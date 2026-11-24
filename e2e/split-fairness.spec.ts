@@ -21,6 +21,9 @@ test("fairness distinguishes invalid, excluded and intentional zero shares witho
   for (const name of ["Sam Rivera", "Riley Chen"])
     await page.getByRole("checkbox", { name: `Split with ${name}` }).click();
   await button("Check fairness").click();
+  await expect(
+    page.getByText("An unequal split can be fair.", { exact: false }),
+  ).toBeVisible();
   await expect(label("Alex Morgan, assigned: 50% · $5.01")).toBeVisible();
   await expect(label("Sam Rivera, assigned: Not included")).toBeVisible();
 
@@ -54,7 +57,11 @@ test("fairness distinguishes invalid, excluded and intentional zero shares witho
   await label("Alex Morgan template percentage").fill("100");
   await label("Jordan Lee template percentage").fill("0");
   await button("Save template").click();
-  await button("Use template Intentional split").click();
+  await expect(button("Use template Intentional split")).toBeVisible();
+  await button("Compare splits").click();
+  await button("Saved template").click();
+  await expect(label("Alex Morgan, assigned: 80% · $16.01")).toBeVisible();
+  await button("Apply template").click();
   await expect(label("Alex Morgan, assigned: 100% · $20.01")).toBeVisible();
   await expect(label("Jordan Lee, assigned: 0% · $0.00")).toBeVisible();
   await expect(page.getByText("Assigned zero", { exact: true })).toBeVisible();

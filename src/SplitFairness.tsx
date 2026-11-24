@@ -53,9 +53,8 @@ export function SplitFairness({
     <View style={styles.panel}>
       {header}
       <Txt style={s.muted}>
-        Compared with an equal split among selected roommates. Unequal
-        allocations can be intentional and are valid when they add up to the
-        purchase total.
+        An unequal split can be fair. This check shows how the current shares
+        differ from an equal split among selected roommates.
       </Txt>
       {result.error ? (
         <Txt style={styles.error} accessibilityLiveRegion="polite">

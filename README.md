@@ -70,7 +70,7 @@ In the purchase editor, open **Compare splits** to see the equal split beside a 
 
 ## Check split fairness
 
-Open **Check fairness** in the purchase editor to see the selected allocation and its dollar difference from an equal split among the same roommates. The checker highlights shares that differ by at least 10 percentage points from equal and accounts for ordinary cent rounding. An uneven split can reflect the roommates’ agreement. The check is informational, and standard purchase validation still applies.
+Open **Check fairness** in the purchase editor to see the selected allocation and its dollar difference from an equal split among the same roommates. The checker highlights shares that differ by at least 10 percentage points from equal and accounts for ordinary cent rounding. Unequal splits can be fair. The checker describes the current purchase allocation, and **Compare splits** lets you explore alternatives. Applying a comparison updates the checker. The checker is informational, and standard purchase validation still applies.
 
 ## Enable the live Supabase backend
 
