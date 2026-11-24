@@ -152,6 +152,21 @@ export function equalSplit(cents: number, ids: string[]): Share[] {
     cents: Math.floor(cents / ids.length) + (i < cents % ids.length ? 1 : 0),
   }));
 }
+export function customDollarShares(
+  ids: string[],
+  amounts: Record<string, string>,
+): Share[] {
+  return ids.map((member_id) => ({
+    member_id,
+    cents: parseMoney(amounts[member_id] || "", true),
+  }));
+}
+
+export function validateShareTotal(cents: number, shares: Share[]) {
+  if (shares.reduce((sum, share) => sum + share.cents, 0) !== cents)
+    throw new Error("Shares must add up to the purchase total.");
+}
+
 export const validDate = (value: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(value) &&
   Number.isFinite(new Date(value).getTime()) &&
@@ -199,8 +214,7 @@ export function validateExpense(e: Expense, members: Member[]) {
     )
   )
     throw new Error("Check each roommate’s share.");
-  if (e.shares.reduce((n, s) => n + s.cents, 0) !== e.cents)
-    throw new Error("Shares must add up to the purchase total.");
+  validateShareTotal(e.cents, e.shares);
   if (e.split_percentages != null) {
     if (e.receipt_details)
       throw new Error("Choose either receipt items or percentage splitting.");

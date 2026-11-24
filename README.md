@@ -64,6 +64,10 @@ For a physical Android device, scan the QR code in compatible Expo Go or connect
 
 In the purchase editor, open **Split templates** to create, edit, delete, or apply a household template. Starting from a percentage purchase copies its selected roommates and allocations into the new template draft. A template must total 100%. Applying it copies the percentages into the purchase, where you can adjust them independently. If a roommate leaves, edit the template and redistribute their percentage before using it again.
 
+## Compare purchase splits
+
+In the purchase editor, open **Compare splits** to see the equal split beside a custom-dollar split, a percentage split, or a saved template. Each row shows the amount and its difference from equal splitting. Edit comparison values or change the purchase total to update the results, then apply a valid split to the purchase draft. Equal splitting uses the roommates selected in the purchase editor. Templates use their saved roommates.
+
 ## Enable the live Supabase backend
 
 Apply `202611240001_percentage_splits.sql` before deploying percentage splitting to an existing live backend. It stores the entered percentages so purchases can be reopened and edited without losing the original split. Apply `202611240002_split_templates.sql` next to enable reusable household templates.

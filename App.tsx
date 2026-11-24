@@ -3,6 +3,7 @@ import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
 import SupportChat from "./src/SupportChat";
 import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
 import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
+import { SplitComparison } from "./src/SplitComparison";
 import { SplitTemplates } from "./src/SplitTemplates";
 import { percentageSplit } from "./src/percentageSplit";
 import {
@@ -48,6 +49,7 @@ import {
   balances,
   canEdit,
   categories,
+  customDollarShares,
   equalSplit,
   Expense,
   ShoppingItem,
@@ -1705,14 +1707,23 @@ function PurchaseEditor({
     else if (percentageEntries)
       shares = percentageSplit(cents, percentageEntries);
     else if (splitMode === "custom")
-      shares = selected.map((member_id) => ({
-        member_id,
-        cents: parseMoney(customAmounts[member_id] || "", true),
-      }));
+      shares = customDollarShares(selected, customAmounts);
     else shares = equalSplit(cents, selected);
   } catch (e) {
     if (percentageEntries) percentageError = (e as Error).message;
   }
+  const applyPercentages = (
+    allocations: NonNullable<Expense["split_percentages"]>,
+  ) => {
+    setSplitMode("percentage");
+    setSelected(allocations.map(({ member_id }) => member_id));
+    setPercentages(
+      Object.fromEntries(
+        allocations.map(({ member_id, percentage }) => [member_id, percentage]),
+      ),
+    );
+    setError("");
+  };
   const pick = async (camera: boolean) => {
     if (busy) return;
     setReceiptReviewed(false);
@@ -2143,21 +2154,27 @@ function PurchaseEditor({
               match.
             </Txt>
           )}
-          <SplitTemplates
-            purchaseAllocations={percentageEntries}
-            onApply={(allocations) => {
-              setSplitMode("percentage");
-              setSelected(allocations.map(({ member_id }) => member_id));
-              setPercentages(
-                Object.fromEntries(
-                  allocations.map(({ member_id, percentage }) => [
-                    member_id,
-                    percentage,
-                  ]),
-                ),
-              );
+          <SplitComparison
+            cents={cents}
+            selected={selected}
+            members={available}
+            currency={st.household?.currency}
+            templates={st.splitTemplates}
+            customAmounts={customAmounts}
+            percentages={percentages}
+            onApply={(split) => {
+              if (split.mode === "percentage") {
+                applyPercentages(split.allocations);
+                return;
+              }
+              setSplitMode(split.mode);
+              if (split.mode === "custom") setCustomAmounts(split.amounts);
               setError("");
             }}
+          />
+          <SplitTemplates
+            purchaseAllocations={percentageEntries}
+            onApply={applyPercentages}
           />
           <View style={s.divider} />
         </>
