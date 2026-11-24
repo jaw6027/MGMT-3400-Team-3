@@ -5,6 +5,7 @@ export default defineConfig({
   testIgnore: [],
   testMatch: [
     "**/browser-preview.spec.ts",
+    "**/percentage-split.spec.ts",
     "**/shopping-preview.spec.ts",
     "**/chores-preview.spec.ts",
     "**/support-preview.spec.ts",

@@ -12,7 +12,7 @@ This is a self-contained export of the actual Expo web app, including:
 - Shopping plans from 61 spreadsheet items, custom expenses, purchaser assignments, last-buyer memory, and one-time flags.
 - **Chore Tracker** with 19 spreadsheet chores, custom chores, recurring schedules, fixed or rotating members, and dated completion history.
 - **Grocery & Restock Rotation** with weekly/custom grocery turns, Who’s up next, agreed swaps, skips, essentials linked to the existing shopping list, in-app reminders and completion/fairness history.
-- Purchases, camera/library receipt attachment, reviewable item lists, automatic item-level shares, external cashback tracking, receipt viewing, equal/custom shares, edit/delete permissions, search and filters.
+- Purchases, camera/library receipt attachment, reviewable item lists, automatic item-level shares, external cashback tracking, receipt viewing, equal, custom dollar, and percentage splits, edit/delete permissions, search and filters.
 - Balances, settlement suggestions, manual repayment history, and sample bank/card payments with surcharge previews.
 - Named recurring rent, internet, utility and subscription bills, bank-autopay consent, pause/edit/cancel, reminders and simulated phone verification (code **123456**).
 - Seven card-network samples, the credit-only 2.5% fee, two-step security, bank verification, receiver-confirmed cash, searchable history and downloadable receipts.
@@ -61,6 +61,8 @@ npx expo run:android
 For a physical Android device, scan the QR code in compatible Expo Go or connect it with USB debugging for a native build. Camera access requires a real device or configured emulator camera. Browser photo selection uses the browser's file picker.
 
 ## Enable the live Supabase backend
+
+Apply `202611240001_percentage_splits.sql` before deploying percentage splitting to an existing live backend. It stores the entered percentages so purchases can be reopened and edited without losing the original split.
 
 1. Create a Supabase project. In its SQL Editor, apply every SQL file in `supabase/migrations/` **once, in filename order**. For an existing project, apply only migrations not already installed. The base migration creates tables, RLS, and private receipts; `202611170001_payments.sql` adds payment support; `202611180001_household_signup.sql` adds retry-safe signup onboarding and household renaming; `202611180002_payment_experience.sql` adds paused schedules, payment requests, private account alerts, and serialized occurrence payments; `202611180003_payment_verification_updates.sql` adds cash labels, bank-link progress, and notification delivery claims; `202611180004_cash_confirmation_recovery.sql` adds receiver-approved cash, cancel-autopay transactions, and hashed one-time MFA recovery codes. No manual public-bucket setup is necessary.
 2. Copy your project URL and **public anon key** from Project Settings → API into `.env`:

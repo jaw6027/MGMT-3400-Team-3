@@ -3,6 +3,7 @@ import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
 import SupportChat from "./src/SupportChat";
 import DeveloperBusinessSettings from "./src/DeveloperBusinessSettings";
 import { ReceiptItemEditor } from "./src/ReceiptItemEditor";
+import { percentageSplit } from "./src/percentageSplit";
 import {
   calculateReceipt,
   receiptDraft,
@@ -1615,23 +1616,35 @@ function PurchaseEditor({
         "",
     ),
     [selected, setSelected] = useState(
-      expense?.shares.map((s) => s.member_id) ||
+      expense?.split_percentages?.map((entry) => entry.member_id) ||
+        expense?.shares.map((s) => s.member_id) ||
         st.members.filter((m) => !m.left_at).map((m) => m.id),
     ),
-    [custom, setCustom] = useState(
-      Boolean(
-        expense &&
-        JSON.stringify(
-          [...expense.shares].sort((a, b) =>
-            a.member_id.localeCompare(b.member_id),
-          ),
-        ) !==
-          JSON.stringify(
-            equalSplit(
-              expense.cents,
-              expense.shares.map((s) => s.member_id),
-            ),
-          ),
+    [splitMode, setSplitMode] = useState<"equal" | "custom" | "percentage">(
+      () =>
+        expense?.split_percentages
+          ? "percentage"
+          : expense &&
+              JSON.stringify(
+                [...expense.shares].sort((a, b) =>
+                  a.member_id.localeCompare(b.member_id),
+                ),
+              ) !==
+                JSON.stringify(
+                  equalSplit(
+                    expense.cents,
+                    expense.shares.map((s) => s.member_id),
+                  ),
+                )
+            ? "custom"
+            : "equal",
+    ),
+    [percentages, setPercentages] = useState<Record<string, string>>(() =>
+      Object.fromEntries(
+        expense?.split_percentages?.map(({ member_id, percentage }) => [
+          member_id,
+          percentage,
+        ]) || [],
       ),
     ),
     [customAmounts, setCustomAmounts] = useState<Record<string, string>>(
@@ -1677,18 +1690,27 @@ function PurchaseEditor({
   try {
     cents = itemized ? receiptCalculation?.total || 0 : parseMoney(amount);
   } catch {}
-  let shares = equalSplit(1, ["preview"]);
+  const percentageEntries =
+    !itemized && splitMode === "percentage"
+      ? selected.map((member_id) => ({
+          member_id,
+          percentage: (percentages[member_id] || "").trim(),
+        }))
+      : null;
+  let shares: Expense["shares"] = [];
+  let percentageError = "";
   try {
-    shares = itemized
-      ? receiptCalculation?.shares || []
-      : custom
-        ? selected.map((member_id) => ({
-            member_id,
-            cents: parseMoney(customAmounts[member_id] || "", true),
-          }))
-        : equalSplit(cents, selected);
-  } catch {
-    shares = [];
+    if (itemized) shares = receiptCalculation?.shares || [];
+    else if (percentageEntries)
+      shares = percentageSplit(cents, percentageEntries);
+    else if (splitMode === "custom")
+      shares = selected.map((member_id) => ({
+        member_id,
+        cents: parseMoney(customAmounts[member_id] || "", true),
+      }));
+    else shares = equalSplit(cents, selected);
+  } catch (e) {
+    if (percentageEntries) percentageError = (e as Error).message;
   }
   const pick = async (camera: boolean) => {
     if (busy) return;
@@ -1812,6 +1834,7 @@ function PurchaseEditor({
     setError("");
     try {
       const { validateExpense } = await import("./src/core");
+      if (percentageError) throw new Error(percentageError);
       if (itemized && receiptError) throw new Error(receiptError);
       if (itemized && !receiptReviewed)
         throw new Error(
@@ -1825,6 +1848,7 @@ function PurchaseEditor({
         name: name.trim(),
         cents,
         receipt_details: itemized ? receiptDetails : null,
+        split_percentages: percentageEntries,
         date,
         paid_by: paidBy,
         category,
@@ -1942,19 +1966,19 @@ function PurchaseEditor({
       <View style={s.divider} />
       {!itemized && (
         <>
-          <View style={s.between}>
+          <View style={{ gap: 8 }}>
             <Title style={{ fontSize: 22 }}>Split with</Title>
-            <View style={[s.row, { gap: 7 }]}>
+            <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
               <Chip
                 label="Equally"
-                active={!custom}
-                onPress={() => setCustom(false)}
+                active={splitMode === "equal"}
+                onPress={() => setSplitMode("equal")}
               />
               <Chip
                 label="Custom"
-                active={custom}
+                active={splitMode === "custom"}
                 onPress={() => {
-                  setCustom(true);
+                  setSplitMode("custom");
                   if (!Object.keys(customAmounts).length)
                     setCustomAmounts(
                       Object.fromEntries(
@@ -1965,6 +1989,11 @@ function PurchaseEditor({
                       ),
                     );
                 }}
+              />
+              <Chip
+                label="Percentage"
+                active={splitMode === "percentage"}
+                onPress={() => setSplitMode("percentage")}
               />
             </View>
           </View>
@@ -2009,7 +2038,7 @@ function PurchaseEditor({
                   </Txt>
                 </Pressable>
                 {selected.includes(m.id) &&
-                  (custom ? (
+                  (splitMode === "custom" ? (
                     <TextInput
                       accessibilityLabel={`${m.name} custom share`}
                       keyboardType="decimal-pad"
@@ -2029,6 +2058,50 @@ function PurchaseEditor({
                         textAlign: "right",
                       }}
                     />
+                  ) : splitMode === "percentage" ? (
+                    <View style={[s.row, { gap: 5 }]}>
+                      <TextInput
+                        accessibilityLabel={`${m.name} percentage`}
+                        keyboardType="decimal-pad"
+                        value={percentages[m.id] || ""}
+                        placeholder="0"
+                        onChangeText={(value) =>
+                          setPercentages((previous) => ({
+                            ...previous,
+                            [m.id]: value,
+                          }))
+                        }
+                        style={{
+                          borderWidth: 1,
+                          borderColor: C.line,
+                          borderRadius: 7,
+                          padding: 8,
+                          width: 64,
+                          minHeight: 44,
+                          fontFamily: "DM",
+                          color: C.ink,
+                          textAlign: "right",
+                        }}
+                      />
+                      <Txt style={s.muted}>%</Txt>
+                      <Txt
+                        accessibilityLabel={`${m.name} amount owed`}
+                        style={{
+                          fontFamily: "DMBold",
+                          fontSize: 13,
+                          minWidth: 58,
+                          textAlign: "right",
+                        }}
+                      >
+                        {percentageError || !cents
+                          ? "—"
+                          : money(
+                              shares.find((share) => share.member_id === m.id)
+                                ?.cents ?? 0,
+                              st.household?.currency,
+                            )}
+                      </Txt>
+                    </View>
                   ) : (
                     <Txt style={{ fontFamily: "DMBold", fontSize: 13 }}>
                       {money(
@@ -2050,13 +2123,20 @@ function PurchaseEditor({
               Total split · {selected.length} roommates
             </Txt>
             <Txt style={{ fontFamily: "DMBold", color: C.green }}>
-              {money(
-                shares.reduce((n, s) => n + s.cents, 0),
-                st.household?.currency,
-              )}
+              {percentageEntries && (percentageError || !cents)
+                ? "—"
+                : money(
+                    shares.reduce((n, s) => n + s.cents, 0),
+                    st.household?.currency,
+                  )}
             </Txt>
           </View>
-          {!custom && (
+          {percentageError && (
+            <Txt accessibilityRole="alert" style={{ color: C.red }}>
+              {percentageError}
+            </Txt>
+          )}
+          {splitMode === "equal" && (
             <Txt style={{ fontSize: 10, color: C.muted, marginTop: -12 }}>
               Any spare cents are distributed consistently so the shares always
               match.
@@ -2220,6 +2300,7 @@ function PurchaseEditor({
         label={busy ? "Saving…" : expense ? "Save changes" : "Save purchase"}
         icon="Check"
         loading={busy}
+        disabled={Boolean(percentageError)}
         onPress={save}
       />
     </Sheet>
