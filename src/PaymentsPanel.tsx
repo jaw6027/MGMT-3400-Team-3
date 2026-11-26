@@ -1,3 +1,4 @@
+import { groceryLocalLock } from "./grocery";
 import { PaymentBrandLogo } from "./PaymentBrandLogo";
 import { bankBrand, methodBrand } from "./paymentBrands";
 import {
@@ -32,6 +33,7 @@ import { PaymentProgress } from "./PaymentProgress";
 import { PaymentDashboard } from "./PaymentDashboard";
 import { PaymentRequests } from "./PaymentRequests";
 import {
+  demoHouseholdSubscriptionActivated,
   loadPaymentExperience,
   demoRequests,
   saveDemoRequest,
@@ -166,14 +168,15 @@ export default function PaymentsPanel() {
     apply(await loadPaymentExperience(st.user!.id, st.household!.id, st.demo));
     setReady(true);
   };
-  const run = async (fn: () => Promise<void>) => {
+  const run = async (fn: () => Promise<void>, protectAppDues = false) => {
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      await fn();
+      if (st.demo && protectAppDues) await groceryLocalLock(fn);
+      else await fn();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -320,7 +323,26 @@ export default function PaymentsPanel() {
       );
     }
   };
+  const ensureAppDuesAllowed = async (recipient: string) => {
+    if (
+      recipient === "app" &&
+      (st.subscription?.trial_started_at ||
+        (st.demo &&
+          (await demoHouseholdSubscriptionActivated(
+            st.user!.id,
+            st.household!.id,
+          ))))
+    ) {
+      throw new Error(
+        "App dues are replaced by the household subscription. Manage it in Household; no duplicate app payment is allowed.",
+      );
+    }
+  };
   const reviewPayment = () => {
+    if (to === "app" && st.subscription?.trial_started_at)
+      throw new Error(
+        "Manage the household subscription in Household instead of paying app dues.",
+      );
     if (!method) throw new Error("Add and select a payment method first.");
     if (method.issue) throw new Error(method.issue);
     if (method.verification === "pending")
@@ -364,6 +386,7 @@ export default function PaymentsPanel() {
   };
   const pay = async () => {
     if (!review) return;
+    await ensureAppDuesAllowed(review.recipient);
     if (st.demo) {
       const fresh = await loadPaymentExperience(
         st.user!.id,
@@ -498,6 +521,7 @@ export default function PaymentsPanel() {
     setRequestContext(null);
   };
   const saveDue = async () => {
+    await ensureAppDuesAllowed(to);
     if (!method && automatic)
       throw new Error("Add and select a payment method first.");
     dueDate("2026-01", Number(day));
@@ -1312,7 +1336,7 @@ export default function PaymentsPanel() {
                     >
                       {[
                         ...roommates.map((m) => ({ id: m.id, name: m.name })),
-                        ...(state.appDues
+                        ...(state.appDues && !st.subscription?.trial_started_at
                           ? [{ id: "app", name: "SplitCart app dues" }]
                           : []),
                       ].map((m) => (
@@ -1424,7 +1448,9 @@ export default function PaymentsPanel() {
                                 : `Pay ${fmt(review.total)}`
                             }
                             loading={busy}
-                            onPress={() => void run(pay)}
+                            onPress={() =>
+                              void run(pay, review?.recipient === "app")
+                            }
                           />
                           <Button
                             secondary
@@ -1527,7 +1553,7 @@ export default function PaymentsPanel() {
                       (automatic && (!method || !state.available)) ||
                       st.household!.currency !== "USD"
                     }
-                    onPress={() => void run(saveDue)}
+                    onPress={() => void run(saveDue, to === "app")}
                   />
                   {editingDue && (
                     <Button

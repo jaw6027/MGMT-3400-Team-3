@@ -13,6 +13,8 @@ let authenticated = true,
   providerCalls = 0,
   storageCalls = 0;
 let extraction: any;
+let fileMime = "image/png";
+let fileBytes: Uint8Array<ArrayBuffer> = new Uint8Array([137, 80, 78, 71]);
 const requests: { url: string; body: any; headers: Headers }[] = [];
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -23,6 +25,8 @@ const assert = (value: unknown, message = "Assertion failed") => {
   if (!value) throw new Error(message);
 };
 function reset() {
+  fileMime = "image/png";
+  fileBytes = new Uint8Array([137, 80, 78, 71]);
   authenticated = true;
   member = true;
   quota = true;
@@ -60,8 +64,8 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       : json({ message: "Daily receipt scan limit" }, 400);
   if (url.pathname.startsWith("/storage/v1/object/")) {
     storageCalls++;
-    return new Response(new Uint8Array([137, 80, 78, 71]), {
-      headers: { "Content-Type": "image/png" },
+    return new Response(fileBytes, {
+      headers: { "Content-Type": fileMime },
     });
   }
   if (url.href === "https://api.openai.com/v1/chat/completions") {
@@ -172,5 +176,32 @@ Deno.test(
     reset();
     extraction.currency = "EUR";
     assert((await request()).status === 422);
+  },
+);
+
+Deno.test(
+  "PDF utility extraction sends file input and preserves reviewed invoice and item category suggestions",
+  async () => {
+    reset();
+    fileMime = "application/pdf";
+    fileBytes = new TextEncoder().encode("%PDF-1.4 utility statement");
+    extraction.documentKind = "utility";
+    extraction.reference = "INV-30";
+    extraction.items[0].category = "Utilities";
+    const response = await request();
+    assert(response.status === 200);
+    const result = await response.json();
+    assert(result.documentKind === "utility" && result.reference === "INV-30");
+    assert(
+      result.items[0].category === "Utilities" && result.needsReview === true,
+    );
+    const provider = requests.find(
+      (r) => r.url === "https://api.openai.com/v1/chat/completions",
+    )!;
+    const input = provider.body.messages[1].content.find(
+      (c: any) => c.type === "file",
+    );
+    assert(input.file.file_data.startsWith("data:application/pdf;base64,"));
+    assert(providerCalls === 1);
   },
 );

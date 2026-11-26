@@ -16,14 +16,14 @@ Edit **src/supportKnowledge.ts**:
 
 - `supportTopics`: each entry has a stable `id`, a canonical `question`, phrase-matching `patterns`, an `answer`, an optional existing-screen `destination`, and one or two `followUps`.
 - `answerSupport`: ordered intent matching gives specific topics priority over general terms. Explicit short follow-ups use the previous topic (for example, “How do I cancel it?” after Subscription Plans). Unrecognized requests ask for clarification instead of guessing.
-- `subscriptionInfo`: placeholders for the actual monthly price, free/Premium features, management/cancellation/retention policies and household coverage. All are currently undefined because the inspected app has no app-subscription offering, price or checkout. Do not confuse recurring household bills or the credit-card surcharge with a subscription.
+- `subscriptionInfo`: shared configured Basic/Plus/Premium prices and policies from `src/subscriptions.ts`. The assistant describes the one-time 30-day household trial, manager-only changes, shared coverage, scheduled changes, cancellation/history preservation and simulated failure/retry. Benefits are proposed and no existing features are restricted. Recurring roommate bills and the credit-card surcharge remain separate.
 - `supportContact`: currently undefined; there is no invented email address or ticket service.
 
-When approved plans become real, fill in confirmed details **and update the related answers to describe the actual implemented flows**. Remove the current “not configured” language only after those flows exist; do not simply enter a price and leave contradictory placeholders. Never promise retention or household sharing without a defined policy. The current demo is available without payment, but that does not define a future free plan.
+Before real billing or feature restrictions are introduced, update answers to match those separately approved implementations. Current subscription guidance must clearly identify simulated classroom billing and the absence of real payment credentials or charges.
 
 When adding topics, put their IDs in the intent priority order, add real-user phrasing tests, and ensure suggested questions resolve. Destinations use a restricted type matching the seven existing app sections. This is an on-device support system, not a general-purpose generative assistant; unfamiliar phrasing may need a new pattern.
 
-**src/SupportChat.tsx** owns the responsive chat UI, session, input, typing status and shortcuts. **App.tsx** mounts it per account/household and connects shortcuts to the existing tab state. No provider, backend, schema, payment or subscription logic was changed.
+**src/SupportChat.tsx** owns the responsive chat UI, session, input, typing status and shortcuts. **App.tsx** mounts it per account/household and connects shortcuts to the existing tab state. Support remains a local guide; subscription actions run only through the separate subscription interface and scoped backend. See [household subscriptions](household-subscriptions.md).
 
 ## Validate and publish the demo
 
@@ -51,3 +51,6 @@ For manual testing, run `npm run web`, or serve `preview/` with a static server 
 Commit the rebuilt **preview/index.html** with the feature. The shared demo is generated; source changes alone do not update it. Fetch immediately before pushing, preserve teammates' changes, rerun affected checks after any integration, and never force-push.
 
 Short help prompts and grocery guidance are also defined in `src/supportKnowledge.ts`. Edit `shortSupport` to add exact brief phrases; the assistant permits a one-character typo only when it leads unambiguously to one topic. Context resolves short follow-ups such as “how?” or “cancel” where the previous topic makes the meaning clear. Grocery, swap and restock answers link to the existing Grocery & Restock Rotation screen. See [the grocery feature guide](grocery-rotation.md).
+
+
+The assistant also explains PDF/utility uploads, verified hashes versus suspected document matches, manual review, item categories and the spending pie chart. Sample PDF buttons and the sample-image loader are explicitly identified as known fixtures rather than OCR. See [document and spending implementation](documents-spending.md).

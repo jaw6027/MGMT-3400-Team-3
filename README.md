@@ -186,7 +186,7 @@ Playwright starts Expo web automatically or uses an existing server on port 8081
 - A manually recorded repayment is an append-only ledger entry; editing/reversing manual repayments is not included. Double-check before confirming.
 - Client deletion removes a purchase and its shares. Original receipt files remain private, including abandoned uploads. Add a trusted scheduled cleanup job after choosing a retention policy; no service credentials belong in the client.
 - No invite rotation, account deletion/export UI, or household administration roles in this MVP. Account erasure should use a trusted server-side process that preserves/anonymizes the ledger appropriately.
-- Receipt recognition, subscriptions, and currency conversion are deliberately deferred. Live bank/card processing and text/email reminders require the provider deployment described below.
+- Real subscription billing and currency conversion are deferred; optional receipt recognition and simulated household subscriptions are documented below. Live bank/card processing and text/email reminders require the provider deployment described below.
 
 ## Project map
 
@@ -299,7 +299,7 @@ Deploy migration `202611190006_developer_business.sql` and `developer-business`,
 
 ## In-app support assistant
 
-Use the floating chat button for **SplitMate Assistant**, SplitCart’s local support guide. It offers step-by-step help, suggested questions and shortcuts to existing screens in both the app and packaged browser demo. No external AI API or paid service is required. Subscription plans/prices and the public support contact are explicitly marked as undefined until the team configures them. See [assistant behavior, editable FAQ content and testing](docs/support-assistant.md).
+Use the floating chat button for **SplitMate Assistant**, SplitCart’s local support guide. It offers step-by-step help, suggested questions and shortcuts to existing screens in both the app and packaged browser demo. No external AI API or paid service is required. The assistant explains Basic ($3.99), Plus ($5.49), and Premium ($6.99) household plans, the one-time 30-day trial, manager permissions, cancellation and simulated billing. The public support contact remains undefined. See [assistant behavior, editable FAQ content and testing](docs/support-assistant.md).
 
 ## Grocery & Restock Rotation
 
@@ -316,3 +316,19 @@ All seven requested card networks and eight banks now have bundled provider artw
 Apply `202611210001_external_payments.sql` before deploying the updated app. Cash confirmations and duplicate safeguards are preserved. Outside payments do not automatically settle a request/monthly due or cancel autopay; review overlapping schedules before paying. See [flow details and limitations](docs/payments.md#venmo-zelle-and-provider-logos).
 
 Visual previews: [bank logos](docs/previews/bank-logos.png), [card logos](docs/previews/card-logos.png), [Venmo](docs/previews/venmo-outside-payment.png), [Zelle](docs/previews/zelle-outside-payment.png).
+
+
+## Household subscriptions — simulated billing
+
+Open **Household → Compare plans and manage subscription**. Basic is **$3.99**, Plus **$5.49**, and Premium **$6.99 USD per household per month**, with one **30-day free trial starting on activation**. One subscription covers all active roommates with separate logins. Only the billing manager can activate, change, cancel, transfer management or run the billing simulator. All existing features remain available; tier benefits are configurable proposals with no access restrictions.
+
+Trial/renewal dates, scheduled upgrades/downgrades, cancellation, reactivation, payment failure/retry and subscription history work in both demos without payment credentials or real charges. Expense history is preserved. Subscription charges never become household expenses or repayments, and activation disables overlapping legacy app dues. Apply `202611260001_household_subscriptions.sql` for the same simulated feature on a configured backend. See [preview steps, policies, tests and limitations](docs/household-subscriptions.md).
+
+
+## Receipts, utility PDFs and spending pie chart
+
+**Add a purchase** now supports private JPEG/PNG/WebP photographs and PDF receipts or utility statements, with a guided upload → optional extraction/manual entry → review → save flow. Household-wide SHA-256 checks block identical files; merchant/date/total and invoice comparisons warn about suspected duplicates that can be confirmed as legitimate separate purchases. Live hashes are computed server-side from storage bytes.
+
+In **Overview → Spending by category**, the pie chart and legend show category amounts and percentages with the existing period filters. Mixed receipts support item-level categories, including proportional tax/tip/discount allocation without double counting. Saving, editing or deleting an expense updates the chart; older expenses retain their purchase-category behavior.
+
+For a classroom walkthrough, use **Use sample utility PDF** or **Use sample mixed receipt PDF**, review and save, then inspect Overview. These buttons load known sample facts and **do not perform OCR**. Actual image/PDF extraction requires the optional configured external service; manual entry remains available. Deploy `verify-document` and migration `202611260002_documents_spending.sql` for verified live uploads. See [preview steps, privacy, duplicate rules, calculations and deployment](docs/documents-spending.md).

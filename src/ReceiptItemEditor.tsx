@@ -1,3 +1,4 @@
+import { spendingCategories } from "./documents";
 import React from "react";
 import { View, Switch } from "react-native";
 import { Member, money } from "./core";
@@ -84,6 +85,24 @@ export function ReceiptItemEditor({
             keyboardType="decimal-pad"
             onChangeText={(amount: string) => update(index, { amount })}
           />
+          <Txt style={s.label}>SPENDING CATEGORY · ITEM {index + 1}</Txt>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            <Chip
+              label={`Use purchase category · item ${index + 1}`}
+              active={!item.category}
+              onPress={() => update(index, { category: undefined })}
+            />
+            {spendingCategories
+              .filter((c) => c !== "Food & drinks")
+              .map((c) => (
+                <Chip
+                  key={c}
+                  label={`${c} · item ${index + 1}`}
+                  active={item.category === c}
+                  onPress={() => update(index, { category: c })}
+                />
+              ))}
+          </View>
           <Txt style={s.label}>SHARED BY</Txt>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 7 }}>
             {members.map((m) => (

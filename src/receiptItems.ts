@@ -1,5 +1,11 @@
+import { spendingCategories } from "./documents";
 import type { Share } from "./core";
-export type ReceiptItem = { name: string; cents: number; members: string[] };
+export type ReceiptItem = {
+  name: string;
+  cents: number;
+  members: string[];
+  category?: string;
+};
 export type ReceiptDetails = {
   items: ReceiptItem[];
   taxCents: number;
@@ -31,6 +37,11 @@ export function calculateReceipt(
   const weights = new Map<string, number>();
   let subtotal = 0;
   for (const item of details.items) {
+    if (
+      item.category !== undefined &&
+      !spendingCategories.includes(item.category as any)
+    )
+      throw new Error("Choose a valid category for each receipt item.");
     if (
       typeof item.name !== "string" ||
       !item.name.trim() ||
@@ -121,7 +132,12 @@ export function calculateReceipt(
   return { subtotal, total, shares };
 }
 export type ReceiptDraft = {
-  items: { name: string; amount: string; members: string[] }[];
+  items: {
+    name: string;
+    amount: string;
+    members: string[];
+    category?: string;
+  }[];
   tax: string;
   tip: string;
   discount: string;
@@ -136,6 +152,7 @@ export function receiptDraft(
   const amount = (n?: number) => ((n || 0) / 100).toFixed(2);
   return {
     items: details?.items.map((i) => ({
+      ...(i.category ? { category: i.category } : {}),
       name: i.name,
       amount: amount(i.cents),
       members: [...i.members],
@@ -162,6 +179,7 @@ export function detailsFromDraft(draft: ReceiptDraft): ReceiptDetails {
   };
   return {
     items: draft.items.map((i) => ({
+      ...(i.category ? { category: i.category } : {}),
       name: i.name.trim(),
       cents: cents(i.amount),
       members: i.members,

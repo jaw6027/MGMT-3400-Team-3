@@ -1,8 +1,11 @@
+import { spendingCategories } from "./document-rules.ts";
 export const receiptSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
     merchant: { type: "string" },
+    reference: { type: "string" },
+    documentKind: { type: "string", enum: ["receipt", "utility"] },
     date: { type: ["string", "null"] },
     currency: { type: "string" },
     items: {
@@ -10,8 +13,12 @@ export const receiptSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        properties: { name: { type: "string" }, cents: { type: "integer" } },
-        required: ["name", "cents"],
+        properties: {
+          name: { type: "string" },
+          cents: { type: "integer" },
+          category: { type: "string", enum: [...spendingCategories] },
+        },
+        required: ["name", "cents", "category"],
       },
     },
     taxCents: { type: "integer" },
@@ -21,6 +28,8 @@ export const receiptSchema = {
   },
   required: [
     "merchant",
+    "reference",
+    "documentKind",
     "date",
     "currency",
     "items",
@@ -79,6 +88,19 @@ export function validateExtraction(value: any, currency: string) {
   )
     throw new Error(
       "Receipt totals could not be read reliably. Enter them manually.",
+    );
+  if (
+    (value.reference !== undefined &&
+      (typeof value.reference !== "string" || value.reference.length > 120)) ||
+    (value.documentKind !== undefined &&
+      !["receipt", "utility"].includes(value.documentKind)) ||
+    value.items.some(
+      (i: any) =>
+        i.category !== undefined && !spendingCategories.includes(i.category),
+    )
+  )
+    throw new Error(
+      "Review the document reference and item categories manually.",
     );
   const calculated =
     value.items.reduce((n: number, i: any) => n + i.cents, 0) +

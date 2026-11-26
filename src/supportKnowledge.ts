@@ -1,3 +1,8 @@
+import {
+  subscriptionPlans,
+  subscriptionMoney,
+  subscriptionPolicy,
+} from "./subscriptions";
 /** Editable, local support content. No network calls or access to household data. */
 export type SupportDestination =
   | "Grocery & Restock Rotation"
@@ -16,22 +21,62 @@ export type SupportTopic = {
   followUps: string[];
 };
 
-// Product owners must confirm these values/policies before publishing paid plans.
-// null means undefined, not free forever or an entitlement promise.
+// Prices are classroom simulations. Proposed benefits never restrict existing tools.
 export const subscriptionInfo = {
-  monthlyPrice: null as string | null,
-  freeFeatures: null as string | null,
-  premiumFeatures: null as string | null,
-  management: null as string | null,
-  cancellation: null as string | null,
-  dataAfterCancellation: null as string | null,
-  householdSharing: null as string | null,
+  monthlyPrice:
+    subscriptionPlans
+      .map((p) => `${p.name} ${subscriptionMoney(p.cents)}`)
+      .join(", ") + " USD per household per month",
+  freeFeatures: subscriptionPolicy.benefits,
+  premiumFeatures: subscriptionPlans[2].benefits.join("; "),
+  management: subscriptionPolicy.changes,
+  cancellation: subscriptionPolicy.cancellation,
+  dataAfterCancellation:
+    "Household expense history is preserved after cancellation. Clearing browser storage or resetting demo data still removes local demo records.",
+  householdSharing: subscriptionPolicy.sharing,
 };
 export const supportContact: string | null = null;
 const plans = () =>
-  `Subscription details — not yet defined in this demo.\n\nDemo access: you can try expenses, balances, shopping, chores and simulated payments without a paid plan. This is not a published free-tier entitlement.\nFree plan: ${subscriptionInfo.freeFeatures ?? "placeholder — features not yet defined"}.\nPremium: ${subscriptionInfo.monthlyPrice ?? "price not yet defined"}; ${subscriptionInfo.premiumFeatures ?? "benefits not yet defined"}.\n\nNo $6.99 subscription or upgrade checkout is currently configured. Payment-method demos and the credit-card surcharge are separate from an app subscription.`;
+  `Open Household → Compare plans and manage subscription. ${subscriptionInfo.monthlyPrice}. ${subscriptionPolicy.trial} ${subscriptionPolicy.sharing} Only the designated household billing manager can activate, change or cancel.\n\nBasic proposes everyday expense sharing and shopping; Plus adds chore, grocery and recurring-bill organization; Premium adds itemized splits, spending insights and split comparison tools. ${subscriptionPolicy.benefits}\n\nThis is simulated classroom billing only. No real payment credentials are requested and no money moves. Use the subscription screen to see trial expiration and renewal dates, advance the billing clock, simulate a failed payment, or retry it. There is no permanent free-tier promise.`;
 
 export const supportTopics: SupportTopic[] = [
+  {
+    id: "documentDuplicates",
+    question: "Duplicate receipt or statement",
+    patterns: [
+      /\b(duplicate (receipt|document|expense|invoice)|same receipt|same invoice)\b/,
+    ],
+    answer:
+      "Every uploaded photo or PDF is checked against household documents using its file-content hash. An exact duplicate cannot create another expense, even with a different filename or uploader. Different files with matching merchant/date/total or invoice details produce a warning. Review the listed purchases and select These are different purchases or statements only when they are legitimate separate expenses. Editing the original purchase is allowed; cancellation of a subscription does not remove its receipts.",
+    destination: "Purchases",
+    followUps: ["Upload a receipt or utility statement", "Spending pie chart"],
+  },
+  {
+    id: "documents",
+    question: "Upload a receipt or utility statement",
+    patterns: [
+      /\b(pdf|utility statement|scan receipt|upload.*(receipt|statement|document)|invoice number)\b/,
+    ],
+    answer:
+      "Choose Add a purchase. At Receipt or utility statement, choose the document type and use Take photo, Choose photo or Choose PDF or document. JPEG, PNG, WebP and PDF files up to 5 MB stay in private household storage. Uploading alone does not create spending. Optionally scan with the configured external extraction service, or enter the merchant, date, total, invoice number and item details manually. Review the document and amounts, resolve any duplicate warning, then save. Itemized receipts require the existing item review switch. The classroom demo does not perform OCR: Load sample receipt items explicitly replaces the attachment with the known sample and loads sample facts. It does not read arbitrary photos or PDFs.",
+    destination: "Purchases",
+    followUps: ["Duplicate receipt or statement", "Spending pie chart"],
+  },
+  {
+    id: "spending",
+    question: "Spending pie chart",
+    patterns: [
+      /\b(pie chart|spending tracker|spending breakdown|spending categories|mixed (receipt|categories)|item categor)\b/,
+    ],
+    answer:
+      "Overview → Spending by category shows the pie chart, category amounts and percentages for this month, last month or all time. Saving, editing or deleting a reviewed expense updates the report. Set each receipt item's spending category for mixed purchases; uncategorized items use the purchase category. Tax, tip and discounts are allocated proportionally with exact cents. The full receipt is counted once, not again for its items or roommate shares. Repayments, card fees, planned shopping, future bills and simulated subscriptions are excluded. Older expenses remain compatible. Recognized historical duplicate document records are excluded from this report and retained in purchase history for review.",
+    destination: "Overview",
+    followUps: [
+      "Upload a receipt or utility statement",
+      "Duplicate receipt or statement",
+    ],
+  },
+
   {
     id: "groceryRotation",
     question: "Who's up next?",
@@ -69,9 +114,10 @@ export const supportTopics: SupportTopic[] = [
     patterns: [
       /\b(premium|pricing|price|plans?|free version|paid version|paid subscription|free tier|free plan|subscription benefits)\b/,
       /how much.*(cost|splitmate|splitcart)/,
-      /\bsubscription\b/,
+      /\b(subscription|basic|plus|trial|billing manager|renewal|failed subscription payment)\b/,
     ],
     answer: plans(),
+    destination: "Household",
     followUps: ["How do I upgrade?", "Is my subscription shared?"],
   },
   {
@@ -81,7 +127,8 @@ export const supportTopics: SupportTopic[] = [
       /\b(upgrade|change|switch|manage)\b.*\b(subscription|plan|premium)\b/,
       /\bupgrade\b/,
     ],
-    answer: `Subscription management — ${subscriptionInfo.management ?? "placeholder: not yet defined"}. There is no upgrade, change-plan or subscription checkout screen in this demo. You can explore the demo features without buying a subscription.`,
+    answer: `Open Household → Compare plans and manage subscription. Only the household billing manager can select a plan and confirm the change. ${subscriptionPolicy.changes} A queued change can be replaced, or removed by selecting the current plan. No extra mid-cycle charge occurs. If a payment failed, use Retry simulated payment or cancel before changing the plan. This is simulated billing only.`,
+    destination: "Household",
     followUps: ["Subscription Plans", "How do I cancel my subscription?"],
   },
   {
@@ -90,8 +137,8 @@ export const supportTopics: SupportTopic[] = [
     patterns: [
       /\b(cancel|end|stop)\b.*\b(subscription|premium|plan|membership)\b/,
     ],
-    answer: `Subscription cancellation — ${subscriptionInfo.cancellation ?? "placeholder: policy not yet defined"}. This demo has no active app subscription to cancel. Canceling a recurring household payment is different: open Balances → Manage payments → Autopay, choose the schedule and review its cancel controls. I cannot cancel anything for you.`,
-    destination: "Balances",
+    answer: `Open Household → Compare plans and manage subscription → Cancel subscription, then confirm. Only the billing manager can do this. ${subscriptionPolicy.cancellation} Before the end date, Keep subscription renewing undoes scheduled cancellation. Reactivation after cancellation does not grant another trial and records an immediate simulated monthly charge. Recurring roommate bills in Balances → Autopay are separate. I cannot cancel anything for you.`,
+    destination: "Household",
     followUps: [
       "Will I lose information if I cancel?",
       "How do recurring bills work?",
@@ -104,7 +151,8 @@ export const supportTopics: SupportTopic[] = [
       /\b(lose|keep|retain|delete|information|data)\b.*\b(cancel|subscription|premium|downgrade)\b/,
       /\bcancel\b.*\b(data|information|history)\b/,
     ],
-    answer: `Data after subscription cancellation — ${subscriptionInfo.dataAfterCancellation ?? "placeholder: retention policy not yet defined"}. There is no paid subscription in the current demo, so I cannot promise what future cancellation will do. Demo information stays in this browser/device; clearing browser storage or resetting demo data removes local demo information.`,
+    answer: `${subscriptionInfo.dataAfterCancellation} ${subscriptionPolicy.benefits} Cancellation changes subscription billing only; it never deletes purchases, receipts, balances or repayments.`,
+    destination: "Household",
     followUps: [
       "Subscription Plans",
       "What happens when a roommate moves out?",
@@ -117,7 +165,8 @@ export const supportTopics: SupportTopic[] = [
       /\b(subscription|premium|plan)\b.*\b(shared|roommates|household|everyone)\b/,
       /\bshare\b.*\b(subscription|premium|plan)\b/,
     ],
-    answer: `Subscription sharing — ${subscriptionInfo.householdSharing ?? "placeholder: household coverage not yet defined"}. Do not assume a future Premium purchase covers roommates. The current demo lets you rehearse household features without buying a plan.`,
+    answer: `${subscriptionPolicy.sharing} Roommates sign into their own accounts and see the same plan, trial expiration and renewal dates. New active members are included without an extra subscription charge. Only the billing manager can change the subscription or transfer management to another active roommate. If the manager leaves, the first remaining roommate can recover billing management from Household. This demo is local to one browser/device and uses simulated billing.`,
+    destination: "Household",
     followUps: ["Subscription Plans", "Invite a Roommate"],
   },
   {
@@ -647,6 +696,9 @@ export function answerSupport(
   const q = normalize(question);
   // Specific matches override broad terms such as "subscription" or "balance".
   const priority = [
+    "documentDuplicates",
+    "documents",
+    "spending",
     "grocerySwap",
     "restock",
     "groceryRotation",

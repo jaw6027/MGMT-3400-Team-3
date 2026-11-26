@@ -11,6 +11,9 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 }));
 vi.mock("expo-crypto", () => ({
   randomUUID: () => randomUUID(),
+  digest: async (_algorithm: string, bytes: ArrayBuffer) =>
+    Uint8Array.from(createHash("sha256").update(new Uint8Array(bytes)).digest())
+      .buffer,
   CryptoDigestAlgorithm: { SHA256: "SHA256" },
   digestStringAsync: async (_algorithm: string, value: string) =>
     createHash("sha256").update(value).digest("hex"),
@@ -365,4 +368,64 @@ it("persists grocery rotations, serializes competing writes, deduplicates restoc
     (await client.rpc("grocery_snapshot", { household_id: house })).error
       ?.message,
   ).toMatch(/not available/);
+});
+
+describe("shared household subscription rehearsal", () => {
+  it("persists a single trial across accounts and rejects stale or unauthorized changes", async () => {
+    await sample();
+    const snapshot = () =>
+      client.rpc("household_subscription_snapshot", {
+        household_id: "demo-house",
+      });
+    const action = (command: object, version: number) =>
+      client.rpc("household_subscription_apply", {
+        household_id: "demo-house",
+        command,
+        expected_version: version,
+      });
+    let current = (await snapshot()).data;
+    const activated = await action(
+      { type: "activate", plan: "basic" },
+      current.version,
+    );
+    expect(activated.error).toBeNull();
+    current = activated.data;
+    expect(current.charges).toEqual([]);
+    expect((await action({ type: "cancel" }, 0)).error?.message).toContain(
+      "changed",
+    );
+    await client.auth.signOut();
+    await client.auth.signInWithPassword({
+      email: "jordan@splitcart.demo",
+      password: previewSamplePassword,
+    });
+    expect((await snapshot()).data).toEqual(current);
+    expect(
+      (await action({ type: "advance" }, current.version)).error?.message,
+    ).toContain("billing manager");
+    expect(
+      (await action({ type: "activate", plan: "premium" }, current.version))
+        .error?.message,
+    ).toContain("billing manager");
+    await client.auth.signOut();
+    await sample();
+    const results = await Promise.all([
+      action({ type: "activate", plan: "premium" }, current.version),
+      action({ type: "advance" }, current.version),
+    ]);
+    expect(results.filter((r) => !r.error)).toHaveLength(1);
+    const renewed = (await snapshot()).data;
+    expect(renewed.status).toBe("active");
+    expect(renewed.charges).toHaveLength(1);
+    expect(renewed.charges[0].cents).toBe(399);
+    expect((await snapshot()).data.charges).toHaveLength(1);
+    expect(
+      (
+        await client
+          .from("expenses")
+          .select("*")
+          .eq("household_id", "demo-house")
+      ).data,
+    ).toHaveLength(6);
+  });
 });

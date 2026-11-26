@@ -1,3 +1,4 @@
+import { SpendingPieChart, chartColors } from "./SpendingPieChart";
 import React, { useState } from "react";
 import { View } from "react-native";
 import { useStore } from "./store";
@@ -54,7 +55,15 @@ export function SpendingBreakdown() {
           category to see the breakdown.
         </Txt>
       )}
-      {report.rows.map((row) => (
+      <SpendingPieChart rows={report.rows} total={fmt(report.total)} />
+      {report.duplicatesExcluded && (
+        <Txt style={{ color: C.red }}>
+          {report.duplicatesExcluded} historical duplicate document record(s)
+          excluded from this report. Their purchases remain in history for
+          review.
+        </Txt>
+      )}
+      {report.rows.map((row, rowIndex) => (
         <View key={row.category} style={{ gap: 7 }}>
           <View
             style={{
@@ -64,7 +73,19 @@ export function SpendingBreakdown() {
               gap: 8,
             }}
           >
-            <Txt style={{ fontFamily: "DMBold" }}>{row.category}</Txt>
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
+            >
+              <View
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 5,
+                  backgroundColor: chartColors[rowIndex % chartColors.length],
+                }}
+              />
+              <Txt style={{ fontFamily: "DMBold" }}>{row.category}</Txt>
+            </View>
             <Txt>
               {fmt(row.cents)} · {row.percent.toFixed(1)}% · {row.count}{" "}
               purchase{row.count === 1 ? "" : "s"}
@@ -73,6 +94,10 @@ export function SpendingBreakdown() {
           <View
             accessible
             accessibilityRole="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(row.percent)}
+            aria-valuetext={`${row.percent.toFixed(1)} percent, ${fmt(row.cents)}`}
             accessibilityLabel={`${row.category} share of spending`}
             accessibilityValue={{
               min: 0,
@@ -91,7 +116,7 @@ export function SpendingBreakdown() {
               style={{
                 height: 10,
                 width: `${row.percent}%`,
-                backgroundColor: C.green,
+                backgroundColor: chartColors[rowIndex % chartColors.length],
               }}
             />
           </View>
@@ -99,7 +124,10 @@ export function SpendingBreakdown() {
       ))}
       <Txt style={s.muted}>
         Dining includes older “Food & drinks” purchases. Recurring bills appear
-        here only after you record the paid household expense.
+        here only after you record the paid household expense. Mixed receipts
+        allocate tax, tip and discounts across item categories; each expense
+        total is counted once. Category purchase counts can overlap for mixed
+        receipts.
       </Txt>
       {(cashback.expected > 0 || cashback.received > 0) && (
         <View

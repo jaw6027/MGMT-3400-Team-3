@@ -1,3 +1,4 @@
+import { reviewDocument } from "./documentFixtures";
 import { test, expect, Page } from "@playwright/test";
 async function verifySampleSecurity(page: import("@playwright/test").Page) {
   await page.getByLabel("Authenticator code", { exact: true }).fill("123456");
@@ -67,6 +68,8 @@ test("packaged page runs without external requests: purchases, custom splits, up
       "base64",
     ),
   });
+  await expect(page.getByText(/^Verified file:/)).toBeVisible();
+  await reviewDocument(page);
   await page
     .getByRole("button", { name: "Save purchase", exact: true })
     .click();
@@ -93,6 +96,7 @@ test("packaged page runs without external requests: purchases, custom splits, up
   await page
     .getByLabel("What did you buy? *", { exact: true })
     .fill("Edited preview purchase");
+  await reviewDocument(page);
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await page.getByLabel("Search purchases").fill("Edited preview");
   await page
@@ -1310,7 +1314,10 @@ test("sample receipt extraction is reviewable, matches the printed total, and ne
     })
     .click();
   await button("Save purchase").click();
-  await expect(button("View Green Market receipt")).toBeVisible();
+  await expect(
+    page.getByText(/Exact duplicate document:/).first(),
+  ).toBeVisible();
+  await expect(button("View Green Market receipt")).toHaveCount(0);
 });
 
 test("ordinary preview users never receive developer business controls, even with client-side role claims", async ({
@@ -1394,7 +1401,9 @@ test("Venmo handoff stays unconfirmed until the receiver approves and Zelle cann
   await button("Log in").click();
   await page.getByRole("tab", { name: "Balances", exact: true }).click();
   await button("Confirm Venmo received from Alex Morgan").click();
-  await expect(page.getByText(/Receipt confirmed · Balance updated/)).toBeVisible();
+  await expect(
+    page.getByText(/Receipt confirmed · Balance updated/),
+  ).toBeVisible();
   const after = await page.evaluate(() =>
     JSON.parse(
       localStorage.getItem("splitcart-browser-preview-v1")!,
