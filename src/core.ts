@@ -1,3 +1,5 @@
+import type { SplitTemplate } from "./splitTemplates";
+import { percentageSplit } from "./percentageSplit";
 import type { GroceryState } from "./grocery";
 import { calculateReceipt } from "./receiptItems";
 import type { ReceiptDetails } from "./receiptItems";
@@ -11,6 +13,7 @@ export type Share = { member_id: string; cents: number };
 export type Expense = {
   grocery_trip_id?: string | null;
   receipt_details?: ReceiptDetails | null;
+  split_percentages?: Parameters<typeof percentageSplit>[1] | null;
   one_time?: boolean;
   id: string;
   household_id: string;
@@ -100,6 +103,9 @@ export type ChoreCompletion = {
   voided_by?: string | null;
 };
 export type Data = {
+  splitTemplates?: SplitTemplate[];
+  percentageSplitsAvailable?: boolean;
+  splitTemplatesAvailable?: boolean;
   grocery?: GroceryState;
   chores?: Chore[];
   choreCompletions?: ChoreCompletion[];
@@ -148,6 +154,21 @@ export function equalSplit(cents: number, ids: string[]): Share[] {
     cents: Math.floor(cents / ids.length) + (i < cents % ids.length ? 1 : 0),
   }));
 }
+export function customDollarShares(
+  ids: string[],
+  amounts: Record<string, string>,
+): Share[] {
+  return ids.map((member_id) => ({
+    member_id,
+    cents: parseMoney(amounts[member_id] || "", true),
+  }));
+}
+
+export function validateShareTotal(cents: number, shares: Share[]) {
+  if (shares.reduce((sum, share) => sum + share.cents, 0) !== cents)
+    throw new Error("Shares must add up to the purchase total.");
+}
+
 export const validDate = (value: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(value) &&
   Number.isFinite(new Date(value).getTime()) &&
@@ -195,8 +216,22 @@ export function validateExpense(e: Expense, members: Member[]) {
     )
   )
     throw new Error("Check each roommate’s share.");
-  if (e.shares.reduce((n, s) => n + s.cents, 0) !== e.cents)
-    throw new Error("Shares must add up to the purchase total.");
+  validateShareTotal(e.cents, e.shares);
+  if (e.split_percentages != null) {
+    if (e.receipt_details)
+      throw new Error("Choose either receipt items or percentage splitting.");
+    const allocated = percentageSplit(e.cents, e.split_percentages);
+    const shares = new Map(
+      e.shares.map(({ member_id, cents }) => [member_id, cents]),
+    );
+    if (
+      allocated.length !== shares.size ||
+      new Set(allocated.map(({ member_id }) => member_id)).size !==
+        shares.size ||
+      allocated.some(({ member_id, cents }) => shares.get(member_id) !== cents)
+    )
+      throw new Error("Shares must match the roommate percentages.");
+  }
   if (!categories.includes(e.category))
     throw new Error("Choose a valid category.");
   if (e.store.length > 120 || e.notes.length > 2000)

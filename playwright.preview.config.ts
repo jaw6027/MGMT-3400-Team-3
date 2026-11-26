@@ -5,6 +5,10 @@ export default defineConfig({
   testIgnore: [],
   testMatch: [
     "**/browser-preview.spec.ts",
+    "**/percentage-split.spec.ts",
+    "**/split-templates.spec.ts",
+    "**/split-comparison.spec.ts",
+    "**/split-fairness.spec.ts",
     "**/shopping-preview.spec.ts",
     "**/chores-preview.spec.ts",
     "**/support-preview.spec.ts",

@@ -1,4 +1,9 @@
 import {
+  deleteLocalSplitTemplate,
+  saveLocalSplitTemplate,
+  SplitTemplate,
+} from "./splitTemplates";
+import {
   applyGrocery,
   emptyGrocery,
   syncGroceryShopping,
@@ -54,6 +59,7 @@ type User = {
 };
 type PreviewMember = Member & { household_id: string };
 type Database = {
+  splitTemplates?: SplitTemplate[];
   groceryStates?: Record<string, GroceryState>;
   shoppingItems?: ShoppingItem[];
   chores?: Chore[];
@@ -541,6 +547,32 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
             await save(db);
             return json(null);
           }
+          if (name === "save_split_template") {
+            const template = payload.payload as SplitTemplate;
+            requireHouse(db, user.id, template.household_id);
+            db.splitTemplates = saveLocalSplitTemplate(
+              db.splitTemplates || [],
+              template,
+              db.members.filter(
+                (m) => m.household_id === template.household_id,
+              ),
+            );
+            await save(db);
+            return json(null);
+          }
+          if (name === "delete_split_template") {
+            requireHouse(db, user.id, payload.household_id);
+            db.splitTemplates = deleteLocalSplitTemplate(
+              db.splitTemplates || [],
+              {
+                id: payload.template_id,
+                household_id: payload.household_id,
+                version: payload.expected_version,
+              },
+            );
+            await save(db);
+            return json(null);
+          }
           if (name === "save_shopping_item") {
             const item = payload.payload as ShoppingItem;
             requireHouse(db, user.id, item.household_id);
@@ -834,6 +866,13 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
               (c) =>
                 c.household_id === active?.household_id &&
                 c.household_id === filter("household_id"),
+            );
+          else if (table === "split_templates")
+            rows = (db.splitTemplates || []).filter(
+              (template) =>
+                template.household_id === active?.household_id &&
+                (!filter("household_id") ||
+                  template.household_id === filter("household_id")),
             );
           else if (table === "shopping_items")
             rows = db.shoppingItems!.filter(
