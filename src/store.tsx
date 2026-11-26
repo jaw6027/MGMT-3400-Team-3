@@ -1,4 +1,11 @@
 import {
+  applySubscription,
+  initialSubscription,
+  firstSubscriptionMember,
+  settleSubscription,
+  SubscriptionCommand,
+} from "./subscriptions";
+import {
   deleteLocalSplitTemplate,
   saveLocalSplitTemplate,
   SplitTemplate,
@@ -27,7 +34,10 @@ import {
   DUPLICATE_MESSAGE,
   matchingPayment,
 } from "../supabase/functions/_shared/payment-safety";
-import { loadPaymentExperience } from "./paymentStorage";
+import {
+  assertNoPendingDemoAppDues,
+  loadPaymentExperience,
+} from "./paymentStorage";
 import { Linking, Platform } from "react-native";
 import React, {
   createContext,
@@ -75,6 +85,21 @@ const empty: Data = {
   repayments: [],
 };
 const Context = createContext<any>(null);
+async function loadDemoHousehold(): Promise<Data> {
+  return groceryLocalLock(async () => {
+    const raw = await AsyncStorage.getItem("splitcart-demo-v1");
+    const data: Data = raw ? JSON.parse(raw) : demoData();
+    if (data.subscription) {
+      const next = settleSubscription(data.subscription);
+      if (JSON.stringify(next) !== JSON.stringify(data.subscription)) {
+        next.version++;
+        data.subscription = next;
+        await AsyncStorage.setItem("splitcart-demo-v1", JSON.stringify(data));
+      }
+    }
+    return data;
+  });
+}
 export function Provider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<Data>(empty),
     [demo, setDemo] = useState(demoDefault),
@@ -134,8 +159,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
   const dataRef = useRef(data);
   dataRef.current = data;
   const refresh = async () => {
-    const raw = demo ? await AsyncStorage.getItem("splitcart-demo-v1") : null;
-    const d = demo ? (raw ? JSON.parse(raw) : demoData()) : await loadData();
+    const d = demo ? await loadDemoHousehold() : await loadData();
     setData(d);
     dataRef.current = d;
   };
@@ -144,9 +168,9 @@ export function Provider({ children }: { children: React.ReactNode }) {
     if (demo) {
       (async () => {
         try {
-          const raw = await AsyncStorage.getItem("splitcart-demo-v1");
+          const loaded = await loadDemoHousehold();
           if (alive) {
-            setData(raw ? JSON.parse(raw) : demoData());
+            setData(loaded);
             setUser({ id: DEMO_USER, name: "Alex Morgan" });
           }
         } catch {
@@ -258,15 +282,55 @@ export function Provider({ children }: { children: React.ReactNode }) {
     setData(d);
     dataRef.current = d;
   };
-  const mutateDemoData = async (update: (latest: Data) => Data) => {
+  const mutateDemoData = async (
+    update: (latest: Data) => Data | Promise<Data>,
+  ) => {
     const house = dataRef.current.household?.id;
     await groceryLocalLock(async () => {
       const raw = await AsyncStorage.getItem("splitcart-demo-v1");
       const latest: Data = raw ? JSON.parse(raw) : dataRef.current;
       if (latest.household?.id !== house)
         throw new Error("The active household changed. Refresh and try again.");
-      await persist(syncGroceryShopping(update(latest)));
+      await persist(syncGroceryShopping(await update(latest)));
     });
+  };
+  const subscriptionAction = async (
+    command: SubscriptionCommand,
+    version: number,
+  ) => {
+    if (!user || !dataRef.current.household)
+      throw new Error("Sign into a household first.");
+    if (demo) {
+      return mutateDemoData(async (latest) => {
+        if (command.type === "activate")
+          await assertNoPendingDemoAppDues(latest.household!.id);
+        return {
+          ...latest,
+          subscription: applySubscription(
+            latest.subscription ||
+              initialSubscription(
+                latest.household!.id,
+                firstSubscriptionMember(latest.members)!.user_id,
+              ),
+            latest.members,
+            user.id,
+            command,
+            version,
+          ),
+        };
+      });
+    }
+    if (!dataRef.current.subscriptionsAvailable)
+      throw new Error(
+        "Apply the household subscriptions migration before using simulated billing.",
+      );
+    const { error } = await client().rpc("household_subscription_apply", {
+      household_id: dataRef.current.household.id,
+      command,
+      expected_version: version,
+    });
+    await refresh();
+    if (error) throw error;
   };
   const changeSplitTemplate = async (
     template: SplitTemplate,
@@ -844,6 +908,18 @@ export function Provider({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{
         ...data,
+        subscription:
+          demo && data.household
+            ? settleSubscription(
+                data.subscription ||
+                  initialSubscription(
+                    data.household.id,
+                    firstSubscriptionMember(data.members)?.user_id || "",
+                  ),
+              )
+            : data.subscription,
+        subscriptionsAvailable: demo || !!data.subscriptionsAvailable,
+        subscriptionAction,
         percentageSplitsAvailable: demo || !!data.percentageSplitsAvailable,
         splitTemplatesAvailable: demo || !!data.splitTemplatesAvailable,
         splitTemplates: (data.splitTemplates || []).filter(
@@ -918,6 +994,10 @@ export function Provider({ children }: { children: React.ReactNode }) {
   );
 }
 export function useStore(): Data & {
+  subscriptionAction: (
+    command: SubscriptionCommand,
+    version: number,
+  ) => Promise<void>;
   percentageSplitsAvailable: boolean;
   splitTemplatesAvailable: boolean;
   splitTemplates: SplitTemplate[];

@@ -1,9 +1,11 @@
+import type { HouseholdSubscription } from "./subscriptions";
 import type { SplitTemplate } from "./splitTemplates";
 import { percentageSplit } from "./percentageSplit";
 import type { GroceryState } from "./grocery";
 import { calculateReceipt } from "./receiptItems";
 import type { ReceiptDetails } from "./receiptItems";
 export type Member = {
+  joined_at?: string;
   id: string;
   user_id: string;
   name: string;
@@ -103,6 +105,8 @@ export type ChoreCompletion = {
   voided_by?: string | null;
 };
 export type Data = {
+  subscription?: HouseholdSubscription;
+  subscriptionsAvailable?: boolean;
   splitTemplates?: SplitTemplate[];
   percentageSplitsAvailable?: boolean;
   splitTemplatesAvailable?: boolean;

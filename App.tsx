@@ -1,3 +1,4 @@
+import { HouseholdSubscriptions } from "./src/HouseholdSubscriptions";
 import { ExternalPayments } from "./src/ExternalPayments";
 import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
 import SupportChat from "./src/SupportChat";
@@ -2829,6 +2830,7 @@ function HouseholdSettings({ notify }: { notify: (m: string) => void }) {
   };
   return (
     <>
+      <HouseholdSubscriptions key={`${st.household?.id}-${st.user?.id}`} />
       <DeveloperBusinessSettings />
       <SecuritySettings />
       <AccessibilitySettings />

@@ -59,11 +59,11 @@ export function supportFlows(preview: boolean) {
         .getByRole("button", { name: "Subscription Plans", exact: true })
         .click();
       await expect(
-        page.getByText(/Subscription details — not yet defined/),
+        page.getByText(/Basic \$3\.99, Plus \$5\.49, Premium \$6\.99/),
       ).toBeVisible();
       await ask(page, "How do I cancel it?");
       await expect(
-        page.getByText(/Subscription cancellation — placeholder/),
+        page.getByText(/Only the billing manager can do this/),
       ).toBeVisible();
       await ask(page, "How do I split rent?");
       await expect(page.getByText(/For rent, choose Rent/)).toBeVisible();

@@ -1,4 +1,11 @@
 import {
+  applySubscription,
+  initialSubscription,
+  firstSubscriptionMember,
+  settleSubscription,
+  HouseholdSubscription,
+} from "./subscriptions";
+import {
   deleteLocalSplitTemplate,
   saveLocalSplitTemplate,
   SplitTemplate,
@@ -59,6 +66,7 @@ type User = {
 };
 type PreviewMember = Member & { household_id: string };
 type Database = {
+  subscriptions?: Record<string, HouseholdSubscription>;
   splitTemplates?: SplitTemplate[];
   groceryStates?: Record<string, GroceryState>;
   shoppingItems?: ShoppingItem[];
@@ -181,7 +189,9 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
     db.shoppingItems ||= [];
     db.chores ||= [];
     db.choreCompletions ||= [];
-    db.members = db.members.map((m) => ({
+    db.members = db.members.map((m, index) => ({
+      joined_at:
+        m.joined_at || new Date(Date.UTC(2026, 0, 1) + index).toISOString(),
       ...m,
       household_id: (m as PreviewMember).household_id || "demo-house",
     }));
@@ -275,6 +285,63 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
           url.searchParams.get(name)?.replace(/^eq\./, "");
         if (path.startsWith("/rest/v1/rpc/")) {
           const name = path.split("/").pop();
+          if (
+            name === "household_subscription_snapshot" ||
+            name === "household_subscription_apply"
+          ) {
+            const house = payload.household_id;
+            requireHouse(db, user.id, house);
+            const members = db.members.filter((m) => m.household_id === house);
+            db.subscriptions ||= {};
+            const old =
+              db.subscriptions[house] ||
+              initialSubscription(
+                house,
+                firstSubscriptionMember(members)!.user_id,
+              );
+            if (
+              name === "household_subscription_apply" &&
+              payload.command?.type === "activate"
+            ) {
+              for (const roommate of members) {
+                const raw = await storage.getItem(
+                  `splitcart-payments-demo-v1-${roommate.user_id}-${house}`,
+                );
+                if (
+                  raw &&
+                  JSON.parse(raw).payments?.some(
+                    (p: any) =>
+                      p.recipient === "app" &&
+                      ["created", "processing", "requires_action"].includes(
+                        p.status,
+                      ),
+                  )
+                ) {
+                  throw new Error(
+                    "Resolve the pending legacy app-dues payment before activating a subscription.",
+                  );
+                }
+              }
+            }
+            const next =
+              name === "household_subscription_apply"
+                ? applySubscription(
+                    old,
+                    members,
+                    user.id,
+                    payload.command,
+                    payload.expected_version,
+                  )
+                : settleSubscription(old);
+            if (
+              name === "household_subscription_snapshot" &&
+              JSON.stringify(old) !== JSON.stringify(next)
+            )
+              next.version++;
+            db.subscriptions[house] = next;
+            await save(db);
+            return json(next);
+          }
           if (name === "grocery_snapshot" || name === "grocery_apply") {
             const house = payload.household_id;
             requireHouse(db, user.id, house);

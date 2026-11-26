@@ -67,17 +67,21 @@ describe("local support knowledge", () => {
     expect(result.topic).toBe(topic);
     expect(result.text.length).toBeGreaterThan(80);
   });
-  it("does not turn undefined subscriptions into price or policy promises", () => {
-    expect(subscriptionInfo.monthlyPrice).toBeNull();
-    expect(answerSupport("Subscription Plans").text).toContain(
-      "not yet defined",
+  it("describes configured household subscriptions without promising feature restrictions or real billing", () => {
+    expect(subscriptionInfo.monthlyPrice).toContain(
+      "Basic $3.99, Plus $5.49, Premium $6.99",
     );
+    const plans = answerSupport("Subscription Plans");
+    expect(plans.destination).toBe("Household");
+    expect(plans.text).toContain("30-day");
+    expect(plans.text).toContain("No feature restrictions");
+    expect(plans.text).toContain("simulated classroom billing");
     expect(
       answerSupport("Will I lose information if I cancel?").text,
-    ).toContain("cannot promise");
-    expect(answerSupport("Can I upgrade?").text).toContain("no upgrade");
+    ).toContain("history is preserved");
+    expect(answerSupport("Can I upgrade?").text).toContain("next renewal");
     expect(answerSupport("Is my subscription shared?").text).toContain(
-      "Do not assume",
+      "all active household members",
     );
   });
   it("resolves subscription and expense follow-ups, then changes topic", () => {

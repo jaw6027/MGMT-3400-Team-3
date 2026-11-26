@@ -99,6 +99,7 @@ export async function loadData(): Promise<Data> {
     choreCompletions,
     templateData,
     percentageSplitsAvailable,
+    subscriptionResult,
   ] = await Promise.all([
     c.from("households").select("*").eq("id", id).single(),
     all("members"),
@@ -121,9 +122,18 @@ export async function loadData(): Promise<Data> {
         ({ error }) => !error,
         () => false,
       ),
+    c.rpc("household_subscription_snapshot", { household_id: id }).then(
+      ({ data, error }) => ({
+        subscription: error ? undefined : data,
+        available: !error,
+      }),
+      () => ({ subscription: undefined, available: false }),
+    ),
   ]);
   if (household.error) throw household.error;
   return {
+    subscription: subscriptionResult.subscription,
+    subscriptionsAvailable: subscriptionResult.available,
     grocery,
     household: household.data,
     members,
