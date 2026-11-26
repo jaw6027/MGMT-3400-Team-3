@@ -1,3 +1,5 @@
+import { validateDocumentReview } from "../supabase/functions/_shared/document-rules";
+import type { ReceiptDocument } from "./documents";
 import type { HouseholdSubscription } from "./subscriptions";
 import type { SplitTemplate } from "./splitTemplates";
 import { percentageSplit } from "./percentageSplit";
@@ -13,6 +15,9 @@ export type Member = {
 };
 export type Share = { member_id: string; cents: number };
 export type Expense = {
+  receipt_document?: ReceiptDocument | null;
+  document_reviewed?: boolean;
+  duplicate_confirmations?: string[];
   grocery_trip_id?: string | null;
   receipt_details?: ReceiptDetails | null;
   split_percentages?: Parameters<typeof percentageSplit>[1] | null;
@@ -178,6 +183,7 @@ export const validDate = (value: string) =>
   Number.isFinite(new Date(value).getTime()) &&
   new Date(value).toISOString().slice(0, 10) === value;
 export function validateExpense(e: Expense, members: Member[]) {
+  validateDocumentReview(e);
   if (e.receipt_details) {
     const calculated = calculateReceipt(
       e.receipt_details,

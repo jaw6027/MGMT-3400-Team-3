@@ -41,6 +41,43 @@ const plans = () =>
 
 export const supportTopics: SupportTopic[] = [
   {
+    id: "documentDuplicates",
+    question: "Duplicate receipt or statement",
+    patterns: [
+      /\b(duplicate (receipt|document|expense|invoice)|same receipt|same invoice)\b/,
+    ],
+    answer:
+      "Every uploaded photo or PDF is checked against household documents using its file-content hash. An exact duplicate cannot create another expense, even with a different filename or uploader. Different files with matching merchant/date/total or invoice details produce a warning. Review the listed purchases and select These are different purchases or statements only when they are legitimate separate expenses. Editing the original purchase is allowed; cancellation of a subscription does not remove its receipts.",
+    destination: "Purchases",
+    followUps: ["Upload a receipt or utility statement", "Spending pie chart"],
+  },
+  {
+    id: "documents",
+    question: "Upload a receipt or utility statement",
+    patterns: [
+      /\b(pdf|utility statement|scan receipt|upload.*(receipt|statement|document)|invoice number)\b/,
+    ],
+    answer:
+      "Choose Add a purchase. At Receipt or utility statement, choose the document type and use Take photo, Choose photo or Choose PDF or document. JPEG, PNG, WebP and PDF files up to 5 MB stay in private household storage. Uploading alone does not create spending. Optionally scan with the configured external extraction service, or enter the merchant, date, total, invoice number and item details manually. Review the document and amounts, resolve any duplicate warning, then save. Itemized receipts require the existing item review switch. The classroom demo does not perform OCR: Load sample receipt items explicitly replaces the attachment with the known sample and loads sample facts. It does not read arbitrary photos or PDFs.",
+    destination: "Purchases",
+    followUps: ["Duplicate receipt or statement", "Spending pie chart"],
+  },
+  {
+    id: "spending",
+    question: "Spending pie chart",
+    patterns: [
+      /\b(pie chart|spending tracker|spending breakdown|spending categories|mixed (receipt|categories)|item categor)\b/,
+    ],
+    answer:
+      "Overview → Spending by category shows the pie chart, category amounts and percentages for this month, last month or all time. Saving, editing or deleting a reviewed expense updates the report. Set each receipt item's spending category for mixed purchases; uncategorized items use the purchase category. Tax, tip and discounts are allocated proportionally with exact cents. The full receipt is counted once, not again for its items or roommate shares. Repayments, card fees, planned shopping, future bills and simulated subscriptions are excluded. Older expenses remain compatible. Recognized historical duplicate document records are excluded from this report and retained in purchase history for review.",
+    destination: "Overview",
+    followUps: [
+      "Upload a receipt or utility statement",
+      "Duplicate receipt or statement",
+    ],
+  },
+
+  {
     id: "groceryRotation",
     question: "Who's up next?",
     patterns: [
@@ -659,6 +696,9 @@ export function answerSupport(
   const q = normalize(question);
   // Specific matches override broad terms such as "subscription" or "balance".
   const priority = [
+    "documentDuplicates",
+    "documents",
+    "spending",
     "grocerySwap",
     "restock",
     "groceryRotation",

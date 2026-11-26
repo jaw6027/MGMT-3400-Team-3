@@ -6,6 +6,7 @@ export default defineConfig({
   testMatch: [
     "**/browser-preview.spec.ts",
     "**/subscriptions.spec.ts",
+    "**/documents-spending.spec.ts",
     "**/percentage-split.spec.ts",
     "**/split-templates.spec.ts",
     "**/split-comparison.spec.ts",

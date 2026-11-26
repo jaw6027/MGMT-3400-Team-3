@@ -1,3 +1,4 @@
+import { assertDocumentDuplicates } from "./documents";
 import {
   applySubscription,
   initialSubscription,
@@ -402,6 +403,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
           throw new Error(
             "The active household changed. Refresh and try again.",
           );
+        assertDocumentDuplicates(e, latest.expenses);
         const currentExpense = latest.expenses.find((x) => x.id === e.id);
         if (
           currentExpense &&

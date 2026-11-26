@@ -51,3 +51,6 @@ For manual testing, run `npm run web`, or serve `preview/` with a static server 
 Commit the rebuilt **preview/index.html** with the feature. The shared demo is generated; source changes alone do not update it. Fetch immediately before pushing, preserve teammates' changes, rerun affected checks after any integration, and never force-push.
 
 Short help prompts and grocery guidance are also defined in `src/supportKnowledge.ts`. Edit `shortSupport` to add exact brief phrases; the assistant permits a one-character typo only when it leads unambiguously to one topic. Context resolves short follow-ups such as “how?” or “cancel” where the previous topic makes the meaning clear. Grocery, swap and restock answers link to the existing Grocery & Restock Rotation screen. See [the grocery feature guide](grocery-rotation.md).
+
+
+The assistant also explains PDF/utility uploads, verified hashes versus suspected document matches, manual review, item categories and the spending pie chart. Sample PDF buttons and the sample-image loader are explicitly identified as known fixtures rather than OCR. See [document and spending implementation](documents-spending.md).

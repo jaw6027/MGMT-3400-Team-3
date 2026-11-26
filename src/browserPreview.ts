@@ -1,4 +1,9 @@
 import {
+  assertDocumentDuplicates,
+  validateDocument,
+  ReceiptDocument,
+} from "./documents";
+import {
   applySubscription,
   initialSubscription,
   firstSubscriptionMember,
@@ -44,7 +49,6 @@ import {
   CashPayment,
   canEdit,
   validateExpense,
-  validateImage,
   validDate,
 } from "./core";
 import { canonicalShoppingItem, validateShoppingItem } from "./shopping";
@@ -66,6 +70,7 @@ type User = {
 };
 type PreviewMember = Member & { household_id: string };
 type Database = {
+  documents?: Record<string, ReceiptDocument>;
   subscriptions?: Record<string, HouseholdSubscription>;
   splitTemplates?: SplitTemplate[];
   groceryStates?: Record<string, GroceryState>;
@@ -775,6 +780,19 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
             const roommates = db.members.filter(
               (m) => (m as PreviewMember).household_id === e.household_id,
             );
+            if (e.receipt && db.documents?.[e.receipt]) {
+              e.receipt_document = {
+                ...db.documents[e.receipt],
+                kind: e.receipt_document?.kind || "receipt",
+                reference: e.receipt_document?.reference || "",
+              };
+              if (e.document_reviewed !== true)
+                throw new Error(
+                  "Review the document, date and total before saving.",
+                );
+            } else if (e.receipt_document?.sha256)
+              throw new Error("Attach and verify an original document first.");
+            assertDocumentDuplicates(e, db.expenses);
             validateExpense(e, roommates);
             if (
               e.shares.some(
@@ -1004,14 +1022,67 @@ export function createBrowserPreviewBackend(storage: Storage = AsyncStorage) {
         if (!uri) throw new Error("Receipt not found in this browser preview.");
         return uri;
       }),
-    upload: (path: string, bytes: ArrayBuffer, type: string, userId: string) =>
+    upload: (
+      path: string,
+      bytes: ArrayBuffer,
+      type: string,
+      userId: string,
+      name = "Household document",
+    ) =>
       serial(async () => {
         const db = await read();
         ensureMemberHouses(db);
         requireHouse(db, userId, path.split("/")[0]);
         if (path.split("/")[1] !== userId)
           throw new Error("Use your own household receipt folder.");
-        validateImage(type, bytes.byteLength);
+        validateDocument(type, bytes.byteLength, new Uint8Array(bytes));
+        const digest = await Crypto.digest(
+          Crypto.CryptoDigestAlgorithm.SHA256,
+          bytes,
+        );
+        const sha256 = Array.from(new Uint8Array(digest), (b) =>
+          b.toString(16).padStart(2, "0"),
+        ).join("");
+        db.documents ||= {};
+        db.documents[path] = {
+          sha256,
+          mime: type,
+          name: name.slice(0, 120),
+          kind: "receipt",
+          reference: "",
+        };
+        for (const old of db.expenses.filter(
+          (e) =>
+            e.household_id === path.split("/")[0] &&
+            e.receipt &&
+            !e.receipt_document,
+        )) {
+          const uri = db.receipts[old.receipt!];
+          if (!uri) continue;
+          const match =
+            /^data:(image\/(?:png|jpeg|webp)|application\/pdf);base64,(.*)$/.exec(
+              uri,
+            );
+          if (!match) continue;
+          const originalBytes = Uint8Array.from(atob(match[2]), (c) =>
+            c.charCodeAt(0),
+          );
+          const originalDigest = await Crypto.digest(
+            Crypto.CryptoDigestAlgorithm.SHA256,
+            originalBytes,
+          );
+          const originalHash = Array.from(new Uint8Array(originalDigest), (b) =>
+            b.toString(16).padStart(2, "0"),
+          ).join("");
+          old.receipt_document = {
+            sha256: originalHash,
+            mime: match[1],
+            name: "Previously uploaded document",
+            kind: "receipt",
+            reference: "",
+          };
+          db.documents[old.receipt!] = old.receipt_document;
+        }
         let binary = "";
         new Uint8Array(bytes).forEach(
           (b) => (binary += String.fromCharCode(b)),

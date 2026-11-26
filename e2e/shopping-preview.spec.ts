@@ -1,3 +1,4 @@
+import { uploadFixture, reviewDocument } from "./documentFixtures";
 import { test, expect, Page } from "@playwright/test";
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -142,7 +143,8 @@ test("custom one-time expenses stay in history, support receipt/details, and are
     page.getByRole("checkbox", { name: "One-time purchase", exact: true }),
   ).toBeChecked();
   await page.getByLabel("Total (USD) *", { exact: true }).fill("32.75");
-  await page.getByText("Try a sample receipt", { exact: true }).click();
+  await uploadFixture(page);
+  await reviewDocument(page);
   await page
     .getByRole("button", { name: "Save purchase", exact: true })
     .click();

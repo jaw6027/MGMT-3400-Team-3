@@ -6,6 +6,9 @@ import {
 } from "./supportKnowledge";
 
 const questions: [string, string][] = [
+  ["How do I upload a receipt PDF?", "documents"],
+  ["This is a duplicate receipt", "documentDuplicates"],
+  ["Show my spending pie chart", "spending"],
   ["What is SplitMate?", "about"],
   ["How does SplitCart work?", "about"],
   ["What makes SplitMate different from other apps?", "about"],

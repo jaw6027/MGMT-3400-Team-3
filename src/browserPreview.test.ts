@@ -11,6 +11,9 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 }));
 vi.mock("expo-crypto", () => ({
   randomUUID: () => randomUUID(),
+  digest: async (_algorithm: string, bytes: ArrayBuffer) =>
+    Uint8Array.from(createHash("sha256").update(new Uint8Array(bytes)).digest())
+      .buffer,
   CryptoDigestAlgorithm: { SHA256: "SHA256" },
   digestStringAsync: async (_algorithm: string, value: string) =>
     createHash("sha256").update(value).digest("hex"),

@@ -323,3 +323,12 @@ Visual previews: [bank logos](docs/previews/bank-logos.png), [card logos](docs/p
 Open **Household → Compare plans and manage subscription**. Basic is **$3.99**, Plus **$5.49**, and Premium **$6.99 USD per household per month**, with one **30-day free trial starting on activation**. One subscription covers all active roommates with separate logins. Only the billing manager can activate, change, cancel, transfer management or run the billing simulator. All existing features remain available; tier benefits are configurable proposals with no access restrictions.
 
 Trial/renewal dates, scheduled upgrades/downgrades, cancellation, reactivation, payment failure/retry and subscription history work in both demos without payment credentials or real charges. Expense history is preserved. Subscription charges never become household expenses or repayments, and activation disables overlapping legacy app dues. Apply `202611260001_household_subscriptions.sql` for the same simulated feature on a configured backend. See [preview steps, policies, tests and limitations](docs/household-subscriptions.md).
+
+
+## Receipts, utility PDFs and spending pie chart
+
+**Add a purchase** now supports private JPEG/PNG/WebP photographs and PDF receipts or utility statements, with a guided upload → optional extraction/manual entry → review → save flow. Household-wide SHA-256 checks block identical files; merchant/date/total and invoice comparisons warn about suspected duplicates that can be confirmed as legitimate separate purchases. Live hashes are computed server-side from storage bytes.
+
+In **Overview → Spending by category**, the pie chart and legend show category amounts and percentages with the existing period filters. Mixed receipts support item-level categories, including proportional tax/tip/discount allocation without double counting. Saving, editing or deleting an expense updates the chart; older expenses retain their purchase-category behavior.
+
+For a classroom walkthrough, use **Use sample utility PDF** or **Use sample mixed receipt PDF**, review and save, then inspect Overview. These buttons load known sample facts and **do not perform OCR**. Actual image/PDF extraction requires the optional configured external service; manual entry remains available. Deploy `verify-document` and migration `202611260002_documents_spending.sql` for verified live uploads. See [preview steps, privacy, duplicate rules, calculations and deployment](docs/documents-spending.md).

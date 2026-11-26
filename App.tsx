@@ -1,3 +1,11 @@
+import { sampleHouseholdDocument } from "./src/demoDocuments";
+import * as DocumentPicker from "expo-document-picker";
+import { prepareDocument, openDocument } from "./src/backend";
+import {
+  documentMatches,
+  DocumentAsset,
+  ReceiptDocument,
+} from "./src/documents";
 import { HouseholdSubscriptions } from "./src/HouseholdSubscriptions";
 import { ExternalPayments } from "./src/ExternalPayments";
 import GroceryRotation, { GroceryNextCard } from "./src/GroceryRotation";
@@ -26,6 +34,7 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
+  Switch,
   Share,
   TextInput,
   useWindowDimensions,
@@ -59,16 +68,9 @@ import {
   parseMoney,
   settlements,
   today,
-  validateImage,
   validDate,
 } from "./src/core";
-import {
-  client,
-  liveConfigured,
-  receiptUrl,
-  uid,
-  uploadReceipt,
-} from "./src/backend";
+import { client, liveConfigured, receiptUrl, uid } from "./src/backend";
 import { demoReceipt } from "./src/demo";
 import {
   Avatar,
@@ -124,23 +126,84 @@ const shortDate = (d: string) =>
     month: "short",
     day: "numeric",
   });
-function ReceiptPhoto({ path, style }: any) {
+function ReceiptPhoto({ path, style, mime, openable = false }: any) {
   const [uri, setUri] = useState("");
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let alive = true;
+    let ownedURL: string | null = null;
     setFailed(false);
+    setUri("");
     receiptUrl(path)
-      .then((u) => {
+      .then(async (u) => {
+        if (Platform.OS === "web" && u.startsWith("data:application/pdf")) {
+          const blob = await (await fetch(u)).blob();
+          u = URL.createObjectURL(blob);
+          ownedURL = u;
+        }
         if (alive) setUri(u);
+        else if (ownedURL) URL.revokeObjectURL(ownedURL);
       })
       .catch(() => {
         if (alive) setFailed(true);
       });
     return () => {
       alive = false;
+      if (ownedURL) URL.revokeObjectURL(ownedURL);
     };
   }, [path]);
+  if (
+    !openable &&
+    (mime === "application/pdf" ||
+      /\.pdf(?:[?#]|$)/i.test(path) ||
+      path.startsWith("data:application/pdf"))
+  )
+    return (
+      <View
+        accessibilityLabel="PDF document"
+        style={[
+          style,
+          {
+            backgroundColor: C.sage,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 8,
+          },
+        ]}
+      >
+        <Icon name="Receipt" size={20} color={failed ? C.red : C.green} />
+      </View>
+    );
+  if (
+    mime === "application/pdf" ||
+    /\.pdf(?:[?#]|$)/i.test(path) ||
+    path.startsWith("data:application/pdf")
+  )
+    return (
+      <View
+        style={[
+          style,
+          {
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            backgroundColor: C.sage,
+            padding: 8,
+          },
+        ]}
+      >
+        <Txt style={{ fontFamily: "DMBold" }}>PDF document</Txt>
+        {openable && (
+          <Button
+            secondary
+            small
+            label="Open PDF document"
+            disabled={!uri || failed}
+            onPress={() => void openDocument(uri).catch(() => setFailed(true))}
+          />
+        )}
+      </View>
+    );
   return path.startsWith("data:image/svg+xml;utf8,") ? (
     <View style={style}>
       <SvgXml
@@ -1128,7 +1191,11 @@ function Main() {
       )}
       {receipt && (
         <Sheet title="Receipt" onClose={() => setReceipt(null)}>
-          <ReceiptPhoto path={receipt} style={{ width: "100%", height: 550 }} />
+          <ReceiptPhoto
+            path={receipt}
+            openable
+            style={{ width: "100%", height: 550 }}
+          />
           <Txt style={[s.muted, { textAlign: "center" }]}>
             Shared privately with your household.
           </Txt>
@@ -1659,7 +1726,7 @@ function PurchaseEditor({
       ),
     ),
     [receipt, setReceipt] = useState(expense?.receipt || null),
-    [asset, setAsset] = useState<ImagePicker.ImagePickerAsset | null>(null),
+    [asset, setAsset] = useState<DocumentAsset | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [itemized, setItemized] = useState(!!expense?.receipt_details);
@@ -1670,6 +1737,20 @@ function PurchaseEditor({
     ),
   );
   const [receiptReviewed, setReceiptReviewed] = useState(false);
+  const [document, setDocument] = useState<ReceiptDocument | null>(
+    expense?.receipt_document || null,
+  );
+  const [documentKind, setDocumentKind] = useState<"receipt" | "utility">(
+    expense?.receipt_document?.kind || "receipt",
+  );
+  const [reference, setReference] = useState(
+    expense?.receipt_document?.reference || "",
+  );
+  const [documentReviewed, setDocumentReviewed] = useState(false);
+  const [confirmedDuplicates, setConfirmedDuplicates] = useState<string[]>([]);
+  const prepared = useRef<{ path: string; document: ReceiptDocument } | null>(
+    null,
+  );
   const lock = useRef(false);
   const uploaded = useRef<string | null>(null);
   const available = st.members.filter(
@@ -1695,6 +1776,122 @@ function PurchaseEditor({
   try {
     cents = itemized ? receiptCalculation?.total || 0 : parseMoney(amount);
   } catch {}
+  const documentMetadata = document
+    ? { ...document, kind: documentKind, reference: reference.trim() }
+    : null;
+  const duplicateCandidate = {
+    id,
+    household_id: st.household!.id,
+    name,
+    store,
+    date,
+    cents,
+    receipt,
+    receipt_document: documentMetadata,
+  };
+  const duplicates = documentMatches(duplicateCandidate, st.expenses);
+  const duplicateSignature = JSON.stringify([
+    receipt,
+    documentMetadata,
+    store,
+    date,
+    cents,
+    name,
+    paidBy,
+    category,
+    itemized,
+    receiptItems,
+  ]);
+  useEffect(() => {
+    setConfirmedDuplicates([]);
+    setDocumentReviewed(false);
+  }, [duplicateSignature]);
+  const acceptDocument = async (next: DocumentAsset) => {
+    setAsset(next);
+    setReceipt(next.uri);
+    setDocument(null);
+    prepared.current = null;
+    uploaded.current = null;
+    setDocumentReviewed(false);
+    setReceiptReviewed(false);
+    setBusy(true);
+    setError("");
+    try {
+      const result = await prepareDocument(
+        next,
+        st.household!.id,
+        st.user!.id,
+        st.demo && !browserPreviewEnabled,
+      );
+      prepared.current = result;
+      uploaded.current = result.path;
+      setReceipt(result.path);
+      setDocument(result.document);
+      await st.refresh();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const useSampleDocument = async (kind: "utility" | "mixed") => {
+    const example = sampleHouseholdDocument(
+      kind,
+      st.household!.currency,
+      today(),
+    );
+    await acceptDocument(example.asset);
+    setDocumentKind(kind === "utility" ? "utility" : "receipt");
+    setReference(example.reference);
+    setName(
+      kind === "utility"
+        ? "Sample electricity statement"
+        : "Sample mixed household receipt",
+    );
+    setStore(example.merchant);
+    setDate(today());
+    setAmount((example.total / 100).toFixed(2));
+    setCategory(kind === "utility" ? "Utilities" : "Other");
+    setItemized(kind === "mixed");
+    if (kind === "mixed")
+      setReceiptItems(
+        receiptDraft({
+          items: example.items.map((item) => ({
+            ...item,
+            members: st.members.filter((m) => !m.left_at).map((m) => m.id),
+          })),
+          taxCents: example.taxCents,
+          tipCents: 0,
+          discountCents: 0,
+          cashbackExpectedCents: 0,
+          cashbackReceivedCents: 0,
+          sourceTotalCents: example.total,
+        }),
+      );
+    setReceiptReviewed(false);
+    setDocumentReviewed(false);
+  };
+  const pickDocument = async () => {
+    if (busy) return;
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ["application/pdf", "image/jpeg", "image/png", "image/webp"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (!result.canceled) {
+        const file = result.assets[0];
+        await acceptDocument({
+          uri: file.uri,
+          mimeType: file.mimeType,
+          fileSize: file.size,
+          name: file.name,
+        });
+      }
+    } catch (e: any) {
+      setError(e.message || "Document selection failed.");
+    }
+  };
   const percentageEntries =
     !itemized && splitMode === "percentage"
       ? selected.map((member_id) => ({
@@ -1750,10 +1947,7 @@ function PurchaseEditor({
           });
       if (!result.canceled) {
         const a = result.assets[0];
-        if (a.fileSize) validateImage(a.mimeType || "image/jpeg", a.fileSize);
-        setAsset(a);
-        setReceipt(a.uri);
-        uploaded.current = null;
+        await acceptDocument(a);
       }
     } catch (e: any) {
       setError(e.message);
@@ -1769,6 +1963,11 @@ function PurchaseEditor({
       if (st.demo) {
         setReceipt(demoReceipt);
         setAsset(null);
+        setDocument(null);
+        setDocumentKind("receipt");
+        setReference("");
+        setCategory("Groceries");
+        prepared.current = null;
         uploaded.current = null;
         extracted = {
           merchant: "Green Market",
@@ -1788,18 +1987,26 @@ function PurchaseEditor({
       } else {
         let path = receipt;
         if (asset) {
-          if (!uploaded.current)
-            uploaded.current = await uploadReceipt(
+          if (!prepared.current)
+            prepared.current = await prepareDocument(
               asset,
               st.household!.id,
               st.user!.id,
             );
+          uploaded.current = prepared.current.path;
+          setDocument(prepared.current.document);
           path = uploaded.current;
         }
         if (!path) throw new Error("Upload a receipt photo first.");
         const { data, error } = await client().functions.invoke(
           "scan-receipt",
-          { body: { household_id: st.household!.id, receipt_path: path } },
+          {
+            body: {
+              household_id: st.household!.id,
+              receipt_path: path,
+              document_kind: documentKind,
+            },
+          },
         );
         if (error) {
           let message =
@@ -1812,11 +2019,18 @@ function PurchaseEditor({
         }
         extracted = validateExtraction(data, st.household!.currency);
       }
+      if (extracted.reference) setReference(extracted.reference);
+      if (extracted.documentKind === "utility") {
+        setDocumentKind("utility");
+        setCategory("Utilities");
+      }
       const details: ReceiptDetails = {
-        items: extracted.items.map((i: { name: string; cents: number }) => ({
-          ...i,
-          members: st.members.filter((m) => !m.left_at).map((m) => m.id),
-        })),
+        items: extracted.items.map(
+          (i: { name: string; cents: number; category?: string }) => ({
+            ...i,
+            members: st.members.filter((m) => !m.left_at).map((m) => m.id),
+          }),
+        ),
         taxCents: extracted.taxCents,
         tipCents: extracted.tipCents,
         discountCents: extracted.discountCents,
@@ -1860,6 +2074,20 @@ function PurchaseEditor({
         throw new Error(
           "Review the receipt items, assignments and total before saving.",
         );
+      if (
+        receipt &&
+        (document || asset) &&
+        !(itemized ? receiptReviewed : documentReviewed)
+      )
+        throw new Error("Review the document, date and total before saving.");
+      if (duplicates.exact.length)
+        throw new Error(
+          `Exact duplicate document: already recorded as ${duplicates.exact[0].name}. Use the existing purchase.`,
+        );
+      if (duplicates.suspected.some((e) => !confirmedDuplicates.includes(e.id)))
+        throw new Error(
+          "Possible duplicate document. Confirm these are different expenses before saving.",
+        );
       const purchase: Expense = {
         id,
         one_time: oneTime,
@@ -1868,6 +2096,9 @@ function PurchaseEditor({
         name: name.trim(),
         cents,
         receipt_details: itemized ? receiptDetails : null,
+        receipt_document: documentMetadata,
+        document_reviewed: itemized ? receiptReviewed : documentReviewed,
+        duplicate_confirmations: confirmedDuplicates,
         split_percentages: percentageEntries,
         date,
         paid_by: paidBy,
@@ -1880,37 +2111,26 @@ function PurchaseEditor({
       };
       validateExpense(purchase, st.members);
       if (asset) {
-        if (st.demo && !browserPreviewEnabled) {
-          if (Platform.OS === "web") {
-            const response = await fetch(asset.uri);
-            const blob = await response.blob();
-            validateImage(asset.mimeType || blob.type, blob.size);
-            purchase.receipt = await new Promise<string>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(String(reader.result));
-              reader.onerror = reject;
-              reader.readAsDataURL(blob);
-            });
-          } else {
-            const { File } = await import("expo-file-system");
-            const file = new File(asset.uri);
-            validateImage(asset.mimeType || "image/jpeg", file.size);
-            purchase.receipt = `data:${asset.mimeType || "image/jpeg"};base64,${await file.base64()}`;
-          }
-        } else {
-          if (!uploaded.current)
-            uploaded.current = await uploadReceipt(
-              asset,
-              st.household!.id,
-              st.user!.id,
-            );
-          purchase.receipt = uploaded.current;
-        }
+        if (!prepared.current)
+          prepared.current = await prepareDocument(
+            asset,
+            st.household!.id,
+            st.user!.id,
+            st.demo && !browserPreviewEnabled,
+          );
+        purchase.receipt = prepared.current.path;
+        purchase.receipt_document = {
+          ...prepared.current.document,
+          kind: documentKind,
+          reference: reference.trim(),
+        };
       }
       await st.saveExpense(purchase, shoppingItem?.id);
       onSaved();
     } catch (e: any) {
       setError(e.message || "Couldn’t save this purchase. Please try again.");
+      if (/duplicate/i.test(e.message || ""))
+        await st.refresh().catch(() => {});
     } finally {
       lock.current = false;
       setBusy(false);
@@ -1924,6 +2144,187 @@ function PurchaseEditor({
       }}
     >
       <Txt style={s.muted}>Big shop or small thing, every share counts.</Txt>
+      <View style={{ gap: 12 }}>
+        <Title style={{ fontSize: 22 }}>
+          Receipt or utility statement <Txt style={s.muted}>(optional)</Txt>
+        </Title>
+        <Txt style={s.muted}>
+          1. Upload a photo or PDF → 2. Extract or enter details → 3. Review →
+          4. Save expense. Uploads alone do not affect spending.
+        </Txt>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <Chip
+            label="Receipt"
+            active={documentKind === "receipt"}
+            onPress={() => setDocumentKind("receipt")}
+          />
+          <Chip
+            label="Utility statement"
+            active={documentKind === "utility"}
+            onPress={() => {
+              setDocumentKind("utility");
+              setCategory("Utilities");
+            }}
+          />
+        </View>
+        <Field
+          label="Receipt or invoice number (optional)"
+          value={reference}
+          onChangeText={setReference}
+          maxLength={120}
+        />
+        {receipt && (
+          <View style={[s.row, { gap: 15 }]}>
+            {asset &&
+            document?.mime !== "application/pdf" &&
+            asset.mimeType !== "application/pdf" ? (
+              <Image
+                source={{ uri: asset.uri }}
+                style={{ height: 100, width: 85, borderRadius: 8 }}
+              />
+            ) : (
+              <ReceiptPhoto
+                path={receipt}
+                mime={document?.mime || asset?.mimeType}
+                openable
+                style={{
+                  height: 100,
+                  width:
+                    (document?.mime || asset?.mimeType) === "application/pdf"
+                      ? 140
+                      : 85,
+                  borderRadius: 8,
+                }}
+              />
+            )}
+            <Button
+              secondary
+              small
+              label="Remove"
+              onPress={() => {
+                setReceipt(null);
+                setAsset(null);
+                setDocument(null);
+                prepared.current = null;
+                setDocumentReviewed(false);
+                setReceiptReviewed(false);
+                uploaded.current = null;
+              }}
+            />
+          </View>
+        )}
+        <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
+          <Button
+            secondary
+            small
+            label="Choose PDF or document"
+            icon="Receipt"
+            disabled={busy}
+            onPress={() => void pickDocument()}
+          />
+          <Button
+            secondary
+            small
+            disabled={busy}
+            label="Take photo"
+            icon="Camera"
+            onPress={() => pick(true)}
+          />
+          <Button
+            secondary
+            small
+            label="Choose photo"
+            disabled={busy}
+            icon="ImageIcon"
+            onPress={() => pick(false)}
+          />
+        </View>
+        {st.demo && !receipt && (
+          <View style={{ gap: 8 }}>
+            <Txt style={s.muted}>
+              Classroom PDF examples with known facts. These buttons do not
+              perform OCR.
+            </Txt>
+            <Button
+              secondary
+              small
+              label="Use sample utility PDF"
+              disabled={busy}
+              onPress={() => void useSampleDocument("utility")}
+            />
+            <Button
+              secondary
+              small
+              label="Use sample mixed receipt PDF"
+              disabled={busy}
+              onPress={() => void useSampleDocument("mixed")}
+            />
+          </View>
+        )}
+        {st.demo && !receipt && (
+          <Pressable
+            onPress={() => {
+              setReceipt(demoReceipt);
+              setAsset(null);
+            }}
+          >
+            <Txt style={s.link}>Try a sample receipt</Txt>
+          </Pressable>
+        )}
+        <Txt style={{ fontSize: 10, color: C.muted }}>
+          JPEG, PNG, WebP or PDF · up to 5 MB · private to your household
+        </Txt>
+        {document && (
+          <Txt style={{ color: C.green }}>
+            Verified file: {document.name} · Household duplicate checks are
+            enabled.
+          </Txt>
+        )}
+        {receipt && (
+          <Button
+            secondary
+            label={st.demo ? "Load sample receipt items" : "Scan receipt items"}
+            disabled={busy}
+            onPress={() => void scanReceipt()}
+          />
+        )}
+        <Txt style={s.muted}>
+          {st.demo
+            ? "The sample scan replaces the attachment with the known sample receipt and loads its items; it does not read uploaded images or PDFs. Keep your uploaded document and enter its details manually to demonstrate a real upload without OCR."
+            : "Optional scanning sends this private image or PDF to the configured AI extraction service. Review every extracted item and total before saving. Manual entry works without a scanning service."}
+        </Txt>
+        <Button
+          secondary
+          label={
+            itemized
+              ? "Use a simple total instead"
+              : "Itemize receipt and track cashback"
+          }
+          disabled={busy}
+          onPress={() => {
+            if (itemized && receiptCalculation)
+              setAmount((receiptCalculation.total / 100).toFixed(2));
+            setItemized(!itemized);
+            setReceiptReviewed(false);
+          }}
+        />
+        {itemized && (
+          <ReceiptItemEditor
+            payerId={paidBy}
+            draft={receiptItems}
+            onChange={(draft) => {
+              setReceiptItems(draft);
+              setReceiptReviewed(false);
+            }}
+            members={available}
+            currency={st.household!.currency}
+            reviewed={receiptReviewed}
+            onReviewed={setReceiptReviewed}
+            busy={busy}
+          />
+        )}
+      </View>
+
       <Field
         label="What did you buy? *"
         value={name}
@@ -2209,108 +2610,6 @@ function PurchaseEditor({
           <View style={s.divider} />
         </>
       )}
-      <View style={{ gap: 12 }}>
-        <Title style={{ fontSize: 22 }}>
-          Receipt <Txt style={s.muted}>(optional)</Txt>
-        </Title>
-        {receipt && (
-          <View style={[s.row, { gap: 15 }]}>
-            {asset ? (
-              <Image
-                source={{ uri: asset.uri }}
-                style={{ height: 100, width: 85, borderRadius: 8 }}
-              />
-            ) : (
-              <ReceiptPhoto
-                path={receipt}
-                style={{ height: 100, width: 85, borderRadius: 8 }}
-              />
-            )}
-            <Button
-              secondary
-              small
-              label="Remove"
-              onPress={() => {
-                setReceipt(null);
-                setAsset(null);
-                uploaded.current = null;
-              }}
-            />
-          </View>
-        )}
-        <View style={[s.row, { gap: 10 }]}>
-          <Button
-            secondary
-            small
-            label="Take photo"
-            icon="Camera"
-            onPress={() => pick(true)}
-          />
-          <Button
-            secondary
-            small
-            label="Choose photo"
-            icon="ImageIcon"
-            onPress={() => pick(false)}
-          />
-        </View>
-        {st.demo && !receipt && (
-          <Pressable
-            onPress={() => {
-              setReceipt(demoReceipt);
-              setAsset(null);
-            }}
-          >
-            <Txt style={s.link}>Try a sample receipt</Txt>
-          </Pressable>
-        )}
-        <Txt style={{ fontSize: 10, color: C.muted }}>
-          JPEG, PNG or WebP · up to 5 MB · private to your household
-        </Txt>
-        {receipt && (
-          <Button
-            secondary
-            label={st.demo ? "Load sample receipt items" : "Scan receipt items"}
-            disabled={busy}
-            onPress={() => void scanReceipt()}
-          />
-        )}
-        <Txt style={s.muted}>
-          {st.demo
-            ? "The sample scan loads the sample receipt’s items; it does not read uploaded images. You can enter any receipt’s items manually below."
-            : "Optional scanning sends this private receipt image to the configured AI receipt service. Review every extracted item and total before saving. Manual entry works without a scanning service."}
-        </Txt>
-        <Button
-          secondary
-          label={
-            itemized
-              ? "Use a simple total instead"
-              : "Itemize receipt and track cashback"
-          }
-          disabled={busy}
-          onPress={() => {
-            if (itemized && receiptCalculation)
-              setAmount((receiptCalculation.total / 100).toFixed(2));
-            setItemized(!itemized);
-            setReceiptReviewed(false);
-          }}
-        />
-        {itemized && (
-          <ReceiptItemEditor
-            payerId={paidBy}
-            draft={receiptItems}
-            onChange={(draft) => {
-              setReceiptItems(draft);
-              setReceiptReviewed(false);
-            }}
-            members={available}
-            currency={st.household!.currency}
-            reviewed={receiptReviewed}
-            onReviewed={setReceiptReviewed}
-            busy={busy}
-          />
-        )}
-      </View>
       <Pressable
         accessibilityRole="checkbox"
         accessibilityLabel="One-time purchase"
@@ -2359,6 +2658,62 @@ function PurchaseEditor({
         <Txt accessibilityRole="alert" style={{ color: C.red, lineHeight: 21 }}>
           {error}
         </Txt>
+      )}
+      {!!duplicates.exact.length && (
+        <Txt accessibilityRole="alert" style={{ color: C.red }}>
+          Exact duplicate document: already recorded as{" "}
+          {duplicates.exact[0].name}. Close this form and use the existing
+          purchase in Purchases.
+        </Txt>
+      )}
+      {!!duplicates.suspected.length && (
+        <View
+          style={{
+            gap: 10,
+            padding: 14,
+            backgroundColor: C.sage,
+            borderRadius: 12,
+          }}
+        >
+          <Title style={{ fontSize: 22 }}>Possible duplicate document</Title>
+          {duplicates.suspected.map((e) => (
+            <Txt key={e.id}>
+              {e.name} · {e.date} · {money(e.cents, st.household?.currency)}
+            </Txt>
+          ))}
+          <Txt>
+            Merchant, date, amount or invoice details match. Similar purchases
+            can be legitimate; check with your roommates.
+          </Txt>
+          <View style={[s.row, { gap: 10 }]}>
+            <Switch
+              accessibilityLabel="These are different purchases or statements"
+              value={duplicates.suspected.every((e) =>
+                confirmedDuplicates.includes(e.id),
+              )}
+              onValueChange={(checked) =>
+                setConfirmedDuplicates(
+                  checked ? duplicates.suspected.map((e) => e.id) : [],
+                )
+              }
+            />
+            <Txt style={{ flex: 1 }}>
+              These are different purchases or statements.
+            </Txt>
+          </View>
+        </View>
+      )}
+      {!!receipt && !itemized && !!(document || asset) && (
+        <View style={[s.row, { gap: 10 }]}>
+          <Switch
+            accessibilityLabel="I reviewed the document, date, total and expense details"
+            value={documentReviewed}
+            onValueChange={setDocumentReviewed}
+          />
+          <Txt style={{ flex: 1 }}>
+            I reviewed the document, date, total and expense details.
+          </Txt>
+        </View>
       )}
       <Button
         label={busy ? "Saving…" : expense ? "Save changes" : "Save purchase"}
@@ -2456,7 +2811,8 @@ function PurchaseDetail({
                 {item.name} · {money(item.cents, st.household?.currency)}
               </Txt>
               <Txt style={s.muted}>
-                Shared by {item.members.map(name).join(", ")}
+                Shared by {item.members.map(name).join(", ")} · Spending:{" "}
+                {item.category || e.category}
               </Txt>
             </View>
           ))}
@@ -2486,7 +2842,19 @@ function PurchaseDetail({
       )}
       {e.receipt && (
         <>
-          <Title style={{ fontSize: 23 }}>The receipt</Title>
+          <Title style={{ fontSize: 23 }}>
+            {e.receipt_document?.kind === "utility"
+              ? "Utility statement"
+              : "The receipt"}
+          </Title>
+          {e.receipt_document && (
+            <Txt style={s.muted}>
+              {e.receipt_document.name}
+              {e.receipt_document.reference
+                ? ` · Reference ${e.receipt_document.reference}`
+                : ""}
+            </Txt>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open receipt viewer"

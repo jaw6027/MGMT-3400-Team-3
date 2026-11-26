@@ -1,3 +1,4 @@
+import { uploadFixture, reviewDocument } from "./documentFixtures";
 import { test, expect } from "@playwright/test";
 async function verifySampleSecurity(page: import("@playwright/test").Page) {
   await page.getByLabel("Authenticator code", { exact: true }).fill("123456");
@@ -34,7 +35,8 @@ test("phone: add custom expense, preserve shares on edit, inspect receipt, filte
     page.getByText("Shares must add up to the purchase total."),
   ).toBeVisible();
   await page.getByLabel("Riley Chen custom share").fill("2");
-  await page.getByText("Try a sample receipt", { exact: true }).click();
+  await uploadFixture(page);
+  await reviewDocument(page);
   await page
     .getByRole("button", { name: "Save purchase", exact: true })
     .click();
@@ -53,6 +55,7 @@ test("phone: add custom expense, preserve shares on edit, inspect receipt, filte
   await page
     .getByLabel("What did you buy? *", { exact: true })
     .fill("Test pantry updated");
+  await reviewDocument(page);
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await page
     .getByRole("button", { name: "View Test pantry updated", exact: true })
