@@ -104,6 +104,8 @@ export type ChoreCompletion = {
 };
 export type Data = {
   splitTemplates?: SplitTemplate[];
+  percentageSplitsAvailable?: boolean;
+  splitTemplatesAvailable?: boolean;
   grocery?: GroceryState;
   chores?: Chore[];
   choreCompletions?: ChoreCompletion[];

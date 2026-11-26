@@ -1848,6 +1848,11 @@ function PurchaseEditor({
     setError("");
     try {
       const { validateExpense } = await import("./src/core");
+      if (
+        !st.percentageSplitsAvailable &&
+        (percentageEntries || expense?.split_percentages)
+      )
+        throw new Error("Percentage splits are unavailable on this backend.");
       if (percentageError) throw new Error(percentageError);
       if (itemized && receiptError) throw new Error(receiptError);
       if (itemized && !receiptReviewed)
@@ -2004,11 +2009,13 @@ function PurchaseEditor({
                     );
                 }}
               />
-              <Chip
-                label="Percentage"
-                active={splitMode === "percentage"}
-                onPress={() => setSplitMode("percentage")}
-              />
+              {st.percentageSplitsAvailable && (
+                <Chip
+                  label="Percentage"
+                  active={splitMode === "percentage"}
+                  onPress={() => setSplitMode("percentage")}
+                />
+              )}
             </View>
           </View>
           <View style={{ gap: 12 }}>
@@ -2172,6 +2179,8 @@ function PurchaseEditor({
             members={available}
             currency={st.household?.currency}
             templates={st.splitTemplates}
+            percentageSplitsAvailable={st.percentageSplitsAvailable}
+            splitTemplatesAvailable={st.splitTemplatesAvailable}
             customAmounts={customAmounts}
             percentages={percentages}
             onApply={(split) => {
@@ -2184,10 +2193,18 @@ function PurchaseEditor({
               setError("");
             }}
           />
-          <SplitTemplates
-            purchaseAllocations={percentageEntries}
-            onApply={applyPercentages}
-          />
+          {st.splitTemplatesAvailable ? (
+            <SplitTemplates
+              purchaseAllocations={percentageEntries}
+              onApply={applyPercentages}
+            />
+          ) : (
+            <Txt style={s.muted}>
+              {st.percentageSplitsAvailable
+                ? "Split templates are unavailable on this backend."
+                : "Percentage splits and templates are unavailable on this backend."}
+            </Txt>
+          )}
           <View style={s.divider} />
         </>
       )}

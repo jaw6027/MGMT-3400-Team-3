@@ -286,6 +286,9 @@ export function Provider({ children }: { children: React.ReactNode }) {
             ),
       }));
 
+    if (!dataRef.current.splitTemplatesAvailable)
+      throw new Error("Split templates are unavailable on this backend.");
+
     const { error } = remove
       ? await client().rpc("delete_split_template", {
           template_id: template.id,
@@ -380,13 +383,19 @@ export function Provider({ children }: { children: React.ReactNode }) {
         await persist(syncGroceryShopping(next));
       });
     else {
+      const payload = { ...e };
+      if (!dataRef.current.percentageSplitsAvailable) {
+        if (e.split_percentages != null || old?.split_percentages != null)
+          throw new Error("Percentage splits are unavailable on this backend.");
+        delete payload.split_percentages;
+      }
       if (shoppingId) {
         const { error } = await client().rpc("save_shopping_purchase", {
           shopping_id: shoppingId,
-          payload: e,
+          payload,
         });
         if (error) throw error;
-      } else await saveLiveExpense(e);
+      } else await saveLiveExpense(payload);
       await refresh();
     }
   };
@@ -835,6 +844,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
     <Context.Provider
       value={{
         ...data,
+        percentageSplitsAvailable: demo || !!data.percentageSplitsAvailable,
+        splitTemplatesAvailable: demo || !!data.splitTemplatesAvailable,
         splitTemplates: (data.splitTemplates || []).filter(
           (template) => template.household_id === data.household?.id,
         ),
@@ -907,6 +918,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
   );
 }
 export function useStore(): Data & {
+  percentageSplitsAvailable: boolean;
+  splitTemplatesAvailable: boolean;
   splitTemplates: SplitTemplate[];
   changeSplitTemplate: (
     template: SplitTemplate,

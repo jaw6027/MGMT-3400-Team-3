@@ -97,7 +97,8 @@ export async function loadData(): Promise<Data> {
     shoppingItems,
     chores,
     choreCompletions,
-    splitTemplates,
+    templateData,
+    percentageSplitsAvailable,
   ] = await Promise.all([
     c.from("households").select("*").eq("id", id).single(),
     all("members"),
@@ -107,7 +108,19 @@ export async function loadData(): Promise<Data> {
     all("shopping_items"),
     all("chores"),
     all("chore_completions"),
-    all("split_templates"),
+    // Optional schema must never block existing household data from loading.
+    all("split_templates")
+      .then((rows) => ({ rows, available: true }))
+      .catch(() => ({ rows: [], available: false })),
+    c
+      .from("expenses")
+      .select("split_percentages")
+      .eq("household_id", id)
+      .limit(0)
+      .then(
+        ({ error }) => !error,
+        () => false,
+      ),
   ]);
   if (household.error) throw household.error;
   return {
@@ -120,7 +133,10 @@ export async function loadData(): Promise<Data> {
     shoppingItems,
     chores,
     choreCompletions,
-    splitTemplates,
+    percentageSplitsAvailable,
+    splitTemplatesAvailable:
+      percentageSplitsAvailable && templateData.available,
+    splitTemplates: percentageSplitsAvailable ? templateData.rows : [],
   };
 }
 export async function saveLiveExpense(e: Expense) {

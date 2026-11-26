@@ -5,7 +5,10 @@ import { PGlite } from "@electric-sql/pglite";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 
-async function backend(page: Page) {
+const percentageMigration = "202611240001_percentage_splits.sql";
+const templatesMigration = "202611240002_split_templates.sql";
+
+async function backend(page: Page, legacySplitSchema = false) {
   const db = new PGlite();
   await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create schema storage;
  create table auth.users(id uuid primary key,raw_user_meta_data jsonb);
@@ -13,10 +16,19 @@ async function backend(page: Page) {
  grant usage on schema auth,storage,public to anon,authenticated,service_role;grant execute on function auth.uid() to anon,authenticated;
  create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
  create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text);alter table storage.objects enable row level security;grant select,insert,update,delete on storage.objects to authenticated;`);
+  const migrate = async (file: string) => {
+    await db.exec("reset role");
+    await db.exec(readFileSync("supabase/migrations/" + file, "utf8"));
+  };
   for (const file of readdirSync("supabase/migrations")
     .filter((f) => f.endsWith(".sql"))
     .sort())
-    await db.exec(readFileSync("supabase/migrations/" + file, "utf8"));
+    if (
+      !legacySplitSchema ||
+      ![percentageMigration, templatesMigration].includes(file)
+    )
+      await migrate(file);
+  const purchaseWrites: any[] = [];
   const users = new Map<string, any>();
   let confirmEmail = false;
   let queue = Promise.resolve();
@@ -147,6 +159,14 @@ async function backend(page: Page) {
           await respond(result.rows[0].state);
           return;
         }
+        if (name === "save_expense") {
+          await db.query("select save_expense($1::jsonb)", [
+            JSON.stringify(body.payload),
+          ]);
+          purchaseWrites.push(body.payload);
+          await respond(null);
+          return;
+        }
         if (name === "rename_household") {
           await db.query("select rename_household($1,$2)", [
             body.household_id,
@@ -191,8 +211,24 @@ async function backend(page: Page) {
         await respond(result.rows);
         return;
       }
+      if (path.endsWith("/expenses")) {
+        const result =
+          url.searchParams.get("select") === "split_percentages"
+            ? await db.query(
+                "select split_percentages from expenses where household_id=$1 limit 0",
+                [value("household_id")],
+              )
+            : await db.query(
+                `select e.*, coalesce(
+              (select json_agg(json_build_object('member_id', s.member_id, 'cents', s.cents))
+               from expense_shares s where s.expense_id=e.id), '[]'::json
+            ) as shares from expenses e where household_id=$1 order by id`,
+                [value("household_id")],
+              );
+        await respond(result.rows);
+        return;
+      }
       if (
-        path.endsWith("/expenses") ||
         path.endsWith("/repayments") ||
         path.endsWith("/cash_payments") ||
         path.endsWith("/shopping_items") ||
@@ -212,6 +248,8 @@ async function backend(page: Page) {
   await page.route("https://splitcart-test.supabase.co/**", handler);
   return {
     setupCalls,
+    purchaseWrites,
+    migrate,
     users,
     session,
     recoveryCalls,
@@ -453,7 +491,7 @@ test("password reset requests use a neutral response and recovery links open the
     ).toBeVisible();
     expect(api.recoveryCalls).toHaveLength(1);
     expect(api.recoveryCalls[0].body.email).toBe("recovery@example.com");
-    expect(api.recoveryCalls[0].redirect).toBe("http://localhost:8082/");
+    expect(api.recoveryCalls[0].redirect).toBe(new URL("/", page.url()).href);
     const session = api.session(api.users.get("recovery@example.com"));
     const fragment = new URLSearchParams({
       access_token: session.access_token,
@@ -494,6 +532,71 @@ test("password reset requests use a neutral response and recovery links open the
     await expect(
       page.getByText("Choose a new password", { exact: true }),
     ).toBeVisible();
+  } finally {
+    await api.close();
+  }
+});
+
+test("older live schemas preserve purchases and progressively enable split features", async ({
+  page,
+}) => {
+  const api = await backend(page, true);
+  const button = (name: string) =>
+    page.getByRole("button", { name, exact: true });
+  const input = (name: string) => page.getByLabel(name, { exact: true });
+  const reopenLiveEditor = async () => {
+    await page.reload();
+    await page.getByRole("tab", { name: "Household", exact: true }).click();
+    await button("Switch to live accounts").click();
+    await expect(
+      page.getByText("Legacy Home", { exact: true }).first(),
+    ).toBeVisible();
+    await button("Add a purchase").first().click();
+  };
+  try {
+    await liveSignup(page);
+    await credentials(page, "Alex Legacy", "legacy@example.com");
+    await input("Household name").fill("Legacy Home");
+    await button("Create account").click();
+    await button("Go to dashboard").click();
+    await button("Add a purchase").first().click();
+    await expect(button("Percentage")).toHaveCount(0);
+    await expect(button("Show templates")).toHaveCount(0);
+    await button("Compare splits").click();
+    await expect(button("Custom dollars")).toBeVisible();
+    await expect(button("Percentages")).toHaveCount(0);
+    await expect(button("Saved template")).toHaveCount(0);
+    await input("What did you buy? *").fill("Legacy purchase");
+    await input("Total (USD) *").fill("10.01");
+    await button("Save purchase").click();
+    await expect(
+      page.getByText("Purchase saved. Everyone’s share is accounted for."),
+    ).toBeVisible();
+    expect(api.purchaseWrites[0]).not.toHaveProperty("split_percentages");
+
+    await api.migrate(percentageMigration);
+    await reopenLiveEditor();
+    await expect(button("Percentage")).toBeVisible();
+    await expect(button("Show templates")).toHaveCount(0);
+    await button("Close dialog").click();
+
+    await api.migrate(templatesMigration);
+    await reopenLiveEditor();
+    await expect(button("Percentage")).toBeVisible();
+    await expect(button("Show templates")).toBeVisible();
+    await input("What did you buy? *").fill("Percentage purchase");
+    await input("Total (USD) *").fill("20.01");
+    await button("Percentage").click();
+    await input("Alex Legacy percentage").fill("100");
+    await button("Save purchase").click();
+    await expect(
+      page.getByText("Purchase saved. Everyone’s share is accounted for."),
+    ).toBeVisible();
+    expect(api.purchaseWrites[1].split_percentages).toEqual([
+      { member_id: expect.any(String), percentage: "100" },
+    ]);
+    await page.getByRole("tab", { name: "Purchases", exact: true }).click();
+    await expect(button("View Legacy purchase")).toBeVisible();
   } finally {
     await api.close();
   }

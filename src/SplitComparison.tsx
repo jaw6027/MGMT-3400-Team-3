@@ -21,6 +21,8 @@ export function SplitComparison({
   members,
   currency,
   templates,
+  percentageSplitsAvailable,
+  splitTemplatesAvailable,
   customAmounts,
   percentages,
   onApply,
@@ -30,12 +32,14 @@ export function SplitComparison({
   members: Member[];
   currency?: string;
   templates: SplitTemplate[];
+  percentageSplitsAvailable: boolean;
+  splitTemplatesAvailable: boolean;
   customAmounts: Record<string, string>;
   percentages: Record<string, string>;
   onApply: (split: PurchaseSplit) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<ComparisonOption["mode"]>("custom");
+  const [selectedMode, setMode] = useState<ComparisonOption["mode"]>("custom");
   const [templateId, setTemplateId] = useState<string>();
   const [customEdits, setCustomEdits] = useState<Record<string, string>>({});
   const [percentageEdits, setPercentageEdits] = useState<
@@ -58,6 +62,16 @@ export function SplitComparison({
   );
   if (!open) return header;
 
+  const availableMethods = methods.filter(
+    ({ mode }) =>
+      mode === "custom" ||
+      (mode === "percentage"
+        ? percentageSplitsAvailable
+        : splitTemplatesAvailable),
+  );
+  const mode = availableMethods.some((method) => method.mode === selectedMode)
+    ? selectedMode
+    : "custom";
   const sortedTemplates = [...templates].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
@@ -93,11 +107,13 @@ export function SplitComparison({
     <View style={styles.panel}>
       {header}
       <Txt style={s.muted}>
-        Equal uses the roommates selected above. A saved template can include
-        different roommates.
+        Equal uses the roommates selected above.
+        {splitTemplatesAvailable
+          ? " A saved template can include different roommates."
+          : ""}
       </Txt>
       <View style={[s.row, styles.actions]}>
-        {methods.map((method) => (
+        {availableMethods.map((method) => (
           <Chip
             key={method.mode}
             label={method.label}
